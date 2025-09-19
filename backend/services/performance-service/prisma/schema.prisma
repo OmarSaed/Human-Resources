@@ -1,0 +1,544 @@
+// This is your Prisma schema file for Performance Management Service
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Performance Review Models
+
+model PerformanceReview {
+  id              String   @id @default(uuid())
+  employeeId      String   // Reference to employee from employee-service
+  reviewerId      String   // Reference to reviewer (manager/HR)
+  reviewPeriod    String   // e.g., "2023-Q4", "2023-Annual"
+  reviewType      ReviewType @default(ANNUAL)
+  overallRating   Float?   // 1-5 scale
+  goals           Json?    // Goals and achievements
+  strengths       String?
+  areasForImprovement String?
+  developmentPlan String?
+  managerComments String?
+  employeeComments String?
+  hrComments      String?
+  status          ReviewStatus @default(DRAFT)
+  dueDate         DateTime
+  completedAt     DateTime?
+  submittedAt     DateTime?
+  approvedAt      DateTime?
+  approvedBy      String?
+  metadata        Json?    // Additional flexible data
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
+
+  // Relations
+  goals_relation  Goal[]
+  reviewFeedback  ReviewFeedback[]
+  feedbackRequests FeedbackRequest[]
+  auditLogs       AuditLog[] @relation("AuditLogPerformanceReview")
+
+  @@map("performance_reviews")
+}
+
+model Goal {
+  id              String     @id @default(uuid())
+  employeeId      String     // Reference to employee from employee-service
+  reviewId        String?    // Optional link to performance review
+  title           String
+  description     String?
+  category        GoalCategory @default(PERFORMANCE)
+  priority        Priority   @default(MEDIUM)
+  status          GoalStatus @default(NOT_STARTED)
+  progress        Int        @default(0) // 0-100 percentage
+  targetDate      DateTime
+  achievedDate    DateTime?
+  startDate       DateTime   @default(now())
+  metrics         Json?      // Success metrics and KPIs
+  notes           String?
+  createdBy       String     // Who created the goal
+  assignedBy      String?    // Manager who assigned it
+  weight          Float?     @default(1.0) // Goal weight in overall performance
+  isActive        Boolean    @default(true)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  deletedAt       DateTime?
+
+  // Relations
+  review          PerformanceReview? @relation(fields: [reviewId], references: [id])
+  milestones      GoalMilestone[]
+  updates         GoalUpdate[]
+  progressHistory GoalProgressHistory[]
+  auditLogs       AuditLog[] @relation("AuditLogGoal")
+
+  @@map("goals")
+}
+
+model GoalMilestone {
+  id              String     @id @default(uuid())
+  goalId          String
+  title           String
+  description     String?
+  targetDate      DateTime
+  completedDate   DateTime?
+  status          MilestoneStatus @default(NOT_STARTED)
+  weight          Float      @default(1.0)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  goal            Goal       @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@map("goal_milestones")
+}
+
+model GoalUpdate {
+  id              String     @id @default(uuid())
+  goalId          String
+  updatedBy       String     // Employee or manager
+  previousProgress Int
+  newProgress     Int
+  comment         String?
+  evidenceUrls    Json?      // Supporting documents/links
+  createdAt       DateTime   @default(now())
+
+  // Relations
+  goal            Goal       @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@map("goal_updates")
+}
+
+model ReviewFeedback {
+  id              String     @id @default(uuid())
+  reviewId        String
+  feedbackType    FeedbackType
+  providedBy      String     // Employee ID of feedback provider
+  providerId      String?    // Alias for providedBy (backward compatibility)
+  recipientId     String     // Employee ID of feedback recipient
+  content         String
+  feedback        String?    // Alias for content (backward compatibility)
+  category        String?    // Feedback category
+  type            String?    // Alias for feedbackType (backward compatibility)
+  rating          Float?     // Optional rating
+  competencies    Json?      // Competency ratings
+  isAnonymous     Boolean    @default(false)
+  status          FeedbackStatus @default(PENDING)
+  submittedAt     DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  review          PerformanceReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@map("review_feedback")
+}
+
+model DevelopmentPlan {
+  id              String     @id @default(uuid())
+  employeeId      String     // Reference to employee
+  managerId       String     // Reference to manager
+  reviewId        String?    // Optional link to performance review
+  title           String
+  description     String?
+  objectives      Json       // Development objectives
+  skills          Json?      // Skills to develop
+  resources       Json?      // Learning resources
+  timeline        Json?      // Development timeline
+  budget          Decimal?   @db.Decimal(10, 2)
+  status          PlanStatus @default(DRAFT)
+  startDate       DateTime
+  endDate         DateTime
+  completedAt     DateTime?
+  progress        Int        @default(0) // 0-100 percentage
+  notes           String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  deletedAt       DateTime?
+
+  // Relations
+  activities      DevelopmentActivity[]
+  auditLogs       AuditLog[] @relation("AuditLogDevelopmentPlan")
+
+  @@map("development_plans")
+}
+
+model DevelopmentActivity {
+  id              String     @id @default(uuid())
+  planId          String
+  title           String
+  description     String?
+  type            ActivityType
+  provider        String?    // Training provider
+  cost            Decimal?   @db.Decimal(8, 2)
+  duration        Int?       // Duration in hours
+  startDate       DateTime
+  endDate         DateTime?
+  status          ActivityStatus @default(PLANNED)
+  completionRate  Int        @default(0) // 0-100 percentage
+  certificateUrl  String?
+  feedback        String?
+  rating          Float?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  plan            DevelopmentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@map("development_activities")
+}
+
+model CompetencyFramework {
+  id              String     @id @default(uuid())
+  name            String
+  description     String?
+  version         String     @default("1.0")
+  isActive        Boolean    @default(true)
+  competencyData  Json?      // Legacy competency definitions (optional)
+  createdBy       String
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  assessments     CompetencyAssessment[]
+  competencies    Competency[]
+  roleFrameworks  RoleFramework[]
+
+  @@map("competency_frameworks")
+}
+
+model CompetencyAssessment {
+  id              String     @id @default(uuid())
+  employeeId      String
+  frameworkId     String
+  reviewId        String?    // Optional link to performance review
+  assessorId      String     // Who conducted the assessment
+  competencyId    String?    // Individual competency being assessed
+  scores          Json       // Competency scores
+  score           Decimal?   @db.Decimal(3, 2) // Individual competency score
+  gaps            Json?      // Identified skill gaps
+  recommendations Json?      // Development recommendations
+  assessmentDate  DateTime
+  validUntil      DateTime?
+  notes           String?
+  status          AssessmentStatus @default(DRAFT)
+  completedAt     DateTime?  // When assessment was completed
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  framework       CompetencyFramework @relation(fields: [frameworkId], references: [id])
+  competency      Competency? @relation(fields: [competencyId], references: [id])
+  history         AssessmentHistory[]
+
+  @@map("competency_assessments")
+}
+
+model PerformanceMetric {
+  id              String     @id @default(uuid())
+  employeeId      String
+  metricName      String
+  metricType      MetricType
+  value           Decimal    @db.Decimal(10, 4)
+  target          Decimal?   @db.Decimal(10, 4)
+  targetValue     Decimal?   @db.Decimal(10, 4) // Alias for target
+  minimumValue    Decimal?   @db.Decimal(10, 4)
+  maximumValue    Decimal?   @db.Decimal(10, 4)
+  unit            String?    // e.g., "sales", "calls", "projects"
+  direction       String?    @default("HIGHER_IS_BETTER") // HIGHER_IS_BETTER, LOWER_IS_BETTER, TARGET_RANGE
+  period          String     // e.g., "2023-Q4", "2023-12"
+  recordedAt      DateTime
+  recordedBy      String
+  notes           String?
+  isActive        Boolean    @default(true)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@unique([employeeId, metricName, period])
+  @@map("performance_metrics")
+
+  // Relations
+  values        MetricValue[]
+  targets       MetricTarget[]
+}
+
+model MetricValue {
+  id              String     @id @default(uuid())
+  metricId        String
+  employeeId      String
+  value           Decimal    @db.Decimal(10, 4)
+  period          String     // e.g., "2023-Q4", "2023-12"
+  recordDate      DateTime   @default(now())
+  recordedBy      String     // Who recorded this value
+  notes           String?
+  createdAt       DateTime   @default(now())
+
+  // Relations
+  metric          PerformanceMetric @relation(fields: [metricId], references: [id], onDelete: Cascade)
+
+  @@map("metric_values")
+}
+
+model MetricTarget {
+  id              String     @id @default(uuid())
+  metricId        String?    // Optional - can be for specific metric or general
+  employeeId      String?    // Optional - can be for specific employee or role-based
+  targetValue     Decimal    @db.Decimal(10, 4)
+  minValue        Decimal?   @db.Decimal(10, 4)
+  maxValue        Decimal?   @db.Decimal(10, 4)
+  period          String     // e.g., "2023-Q4", "yearly"
+  targetType      TargetType @default(INDIVIDUAL)
+  createdBy       String
+  validFrom       DateTime   @default(now())
+  validTo         DateTime?
+  isActive        Boolean    @default(true)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  metric          PerformanceMetric? @relation(fields: [metricId], references: [id], onDelete: Cascade)
+
+  @@map("metric_targets")
+}
+
+model GoalProgressHistory {
+  id              String     @id @default(uuid())
+  goalId          String
+  previousProgress Int
+  newProgress     Int
+  changeReason    String?
+  notes           String?
+  updatedBy       String     // Who made the update
+  timestamp       DateTime   @default(now())
+
+  // Relations
+  goal            Goal       @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@map("goal_progress_history")
+}
+
+model FeedbackRequest {
+  id              String     @id @default(uuid())
+  reviewId        String
+  requesterId     String     // Who requested the feedback
+  providerId      String     // Who should provide feedback
+  message         String?    // Optional message with the request
+  dueDate         DateTime
+  status          RequestStatus @default(PENDING)
+  submittedAt     DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  review          PerformanceReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@map("feedback_requests")
+}
+
+model Competency {
+  id              String     @id @default(uuid())
+  frameworkId     String
+  name            String
+  description     String?
+  category        String?    // e.g., "Technical", "Leadership", "Communication"
+  level           String?    // e.g., "Beginner", "Intermediate", "Advanced"
+  behaviorIndicators Json?   // Array of behavior indicators
+  isActive        Boolean    @default(true)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  framework       CompetencyFramework @relation(fields: [frameworkId], references: [id], onDelete: Cascade)
+  assessments     CompetencyAssessment[]
+
+  @@map("competencies")
+}
+
+model RoleFramework {
+  id              String     @id @default(uuid())
+  roleId          String     // Reference to role from employee-service
+  frameworkId     String
+  requiredLevel   String?    // Required competency level for this role
+  priority        Priority   @default(MEDIUM)
+  assignedBy      String
+  assignedAt      DateTime   @default(now())
+  isActive        Boolean    @default(true)
+
+  // Relations
+  framework       CompetencyFramework @relation(fields: [frameworkId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, frameworkId])
+  @@map("role_frameworks")
+}
+
+model AuditLog {
+  id              String     @id @default(uuid())
+  entityType      String     // e.g., 'PerformanceReview', 'Goal'
+  entityId        String
+  action          String     // e.g., 'CREATE', 'UPDATE', 'DELETE'
+  changes         Json?      // What was changed
+  performedBy     String     // User ID who performed the action
+  ipAddress       String?
+  userAgent       String?
+  timestamp       DateTime   @default(now())
+
+  // Relations (optional foreign keys for better querying)
+  performanceReview PerformanceReview? @relation("AuditLogPerformanceReview", fields: [entityId], references: [id], map: "audit_log_performance_review_fkey")
+  goal            Goal?       @relation("AuditLogGoal", fields: [entityId], references: [id], map: "audit_log_goal_fkey")
+  developmentPlan DevelopmentPlan? @relation("AuditLogDevelopmentPlan", fields: [entityId], references: [id], map: "audit_log_development_plan_fkey")
+
+  @@map("audit_logs")
+}
+
+// Enums
+
+enum ReviewType {
+  ANNUAL
+  SEMI_ANNUAL
+  QUARTERLY
+  PROBATIONARY
+  PROJECT_BASED
+  CONTINUOUS
+}
+
+enum ReviewStatus {
+  DRAFT
+  IN_PROGRESS
+  EMPLOYEE_REVIEW
+  MANAGER_REVIEW
+  HR_REVIEW
+  COMPLETED
+  APPROVED
+  CANCELLED
+}
+
+enum GoalCategory {
+  PERFORMANCE
+  DEVELOPMENT
+  CAREER
+  PROJECT
+  PERSONAL
+  TEAM
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum GoalStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  ON_TRACK
+  AT_RISK
+  COMPLETED
+  OVERDUE
+  ON_HOLD
+  CANCELLED
+}
+
+enum MilestoneStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  OVERDUE
+}
+
+enum FeedbackType {
+  SELF
+  MANAGER
+  PEER
+  SUBORDINATE
+  CUSTOMER
+  STAKEHOLDER
+}
+
+enum FeedbackStatus {
+  PENDING
+  SUBMITTED
+  REVIEWED
+}
+
+enum PlanStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  ON_HOLD
+  CANCELLED
+}
+
+enum ActivityType {
+  TRAINING
+  WORKSHOP
+  COURSE
+  CERTIFICATION
+  MENTORING
+  COACHING
+  CONFERENCE
+  READING
+  PROJECT
+  OTHER
+}
+
+enum ActivityStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  OVERDUE
+}
+
+enum MetricType {
+  QUANTITY
+  QUALITY
+  EFFICIENCY
+  REVENUE
+  COST
+  SATISFACTION
+  OTHER
+}
+
+enum TargetType {
+  INDIVIDUAL
+  TEAM
+  DEPARTMENT
+  COMPANY
+}
+
+enum RequestStatus {
+  PENDING
+  SENT
+  COMPLETED
+  DECLINED
+  EXPIRED
+}
+
+enum AssessmentStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+  APPROVED
+  REJECTED
+}
+
+model AssessmentHistory {
+  id              String    @id @default(uuid())
+  assessmentId    String
+  action          String    // e.g., "created", "updated", "submitted", "approved"
+  performedBy     String
+  details         Json?     // Additional action details
+  previousStatus  String?
+  newStatus       String?
+  createdAt       DateTime  @default(now())
+
+  // Relations
+  assessment      CompetencyAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@map("assessment_history")
+}

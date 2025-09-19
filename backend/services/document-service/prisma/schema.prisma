@@ -1,0 +1,728 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Document {
+  id              String      @id @default(cuid())
+  
+  // File metadata
+  filename        String
+  originalName    String
+  mimeType        String
+  size            BigInt      // File size in bytes
+  checksum        String      // File integrity verification
+  
+  // Storage information
+  storageType     StorageType @default(LOCAL)
+  storagePath     String      // Local path or cloud storage key
+  storageUrl      String?     // Direct access URL if applicable
+  
+  // Document classification
+  category        DocumentCategory
+  type            DocumentType
+  tags            String[]
+  
+  // Content and processing
+  content         String?     // Extracted text content
+  metadata        Json?       // Extracted metadata (EXIF, PDF info, etc.)
+  thumbnailUrl    String?     // Thumbnail for images/PDFs
+  previewUrl      String?     // Preview/converted version
+  
+  // Ownership and access
+  ownerId         String      // User who owns/uploaded the document
+  ownerType       OwnerType   @default(EMPLOYEE)
+  
+  // Access control
+  visibility      Visibility  @default(PRIVATE)
+  allowedUsers    String[]    // User IDs with access
+  allowedRoles    String[]    // Roles with access
+  
+  // Versioning
+  version         Int         @default(1)
+  parentId        String?     // Parent document for versions
+  isLatestVersion Boolean     @default(true)
+  
+  // Status and lifecycle
+  status          DocumentStatus @default(ACTIVE)
+  isArchived      Boolean     @default(false)
+  isDeleted       Boolean     @default(false)
+  
+  // Compliance and retention
+  retentionPolicy String?     // Retention policy ID
+  retentionDate   DateTime?   // When document should be deleted
+  legalHold       Boolean     @default(false)
+  legalHoldReason String?     // Reason for legal hold
+  legalHoldAt     DateTime?   // When legal hold was placed
+  legalHoldBy     String?     // Who placed the legal hold
+  complianceFlags Json?       // Compliance-related flags
+  
+  // Additional retention fields
+  deletedAt       DateTime?   // When document was soft deleted
+  archivedAt      DateTime?   // When document was archived
+  reviewRequiredAt DateTime?  // When document requires review
+  retentionPolicyData Json?   // Additional retention policy data
+  
+  // Workflow and approval
+  workflowStatus  WorkflowStatus? @default(NONE)
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectedBy      String?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  
+  // Audit and tracking
+  uploadedBy      String      // Who uploaded the document
+  uploadedAt      DateTime    @default(now())
+  lastAccessedAt  DateTime?
+  lastAccessedBy  String?
+  downloadCount   Int         @default(0)
+  
+  // Relations
+  parent          Document?   @relation("DocumentVersions", fields: [parentId], references: [id])
+  versions        Document[]  @relation("DocumentVersions")
+  documentVersions DocumentVersion[] // Separate version tracking
+  folders         DocumentFolder[]
+  shares          DocumentShare[]
+  comments        DocumentComment[]
+  workflows       DocumentWorkflow[]
+  auditLogs       DocumentAuditLog[]
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@map("documents")
+  @@index([ownerId])
+  @@index([category])
+  @@index([type])
+  @@index([status])
+  @@index([uploadedAt])
+  @@index([checksum])
+}
+
+model DocumentVersion {
+  id              String      @id @default(cuid())
+  documentId      String
+  version         Int
+  filename        String
+  size            BigInt
+  checksum        String
+  storagePath     String
+  uploadedBy      String
+  uploadedAt      DateTime    @default(now())
+  comment         String?
+  
+  // Relations
+  document        Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@map("document_versions")
+  @@unique([documentId, version])
+}
+
+model Folder {
+  id              String      @id @default(cuid())
+  name            String
+  description     String?
+  
+  // Hierarchy
+  parentId        String?
+  path            String      // Full path for quick lookups
+  level           Int         @default(0)
+  
+  // Ownership and access
+  ownerId         String
+  ownerType       OwnerType   @default(EMPLOYEE)
+  
+  // Access control
+  visibility      Visibility  @default(PRIVATE)
+  allowedUsers    String[]
+  allowedRoles    String[]
+  
+  // Folder properties
+  color           String?     // UI color for folder
+  icon            String?     // Icon identifier
+  isSystem        Boolean     @default(false) // System-created folder
+  
+  // Status
+  isArchived      Boolean     @default(false)
+  isDeleted       Boolean     @default(false)
+  
+  // Metadata
+  totalSize       BigInt      @default(0)
+  documentCount   Int         @default(0)
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  parent          Folder?     @relation("FolderHierarchy", fields: [parentId], references: [id])
+  children        Folder[]    @relation("FolderHierarchy")
+  documents       DocumentFolder[]
+  shares          FolderShare[]
+  
+  @@map("folders")
+  @@index([ownerId])
+  @@index([parentId])
+  @@index([path])
+}
+
+model DocumentFolder {
+  id          String    @id @default(cuid())
+  documentId  String
+  folderId    String
+  
+  addedAt     DateTime  @default(now())
+  addedBy     String
+  
+  // Relations
+  document    Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  folder      Folder    @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  
+  @@map("document_folders")
+  @@unique([documentId, folderId])
+}
+
+model DocumentShare {
+  id              String      @id @default(cuid())
+  documentId      String
+  
+  // Share details
+  sharedWith      String      // User ID
+  sharedBy        String      // Who shared it
+  permissions     SharePermission[]
+  
+  // Access control
+  expiresAt       DateTime?
+  isRevoked       Boolean     @default(false)
+  revokedAt       DateTime?
+  revokedBy       String?
+  
+  // Tracking
+  accessCount     Int         @default(0)
+  lastAccessedAt  DateTime?
+  
+  // Notifications
+  notifyOnAccess  Boolean     @default(false)
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  document        Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  @@map("document_shares")
+  @@index([documentId])
+  @@index([sharedWith])
+}
+
+model FolderShare {
+  id              String      @id @default(cuid())
+  folderId        String
+  
+  // Share details
+  sharedWith      String      // User ID
+  sharedBy        String      // Who shared it
+  permissions     SharePermission[]
+  
+  // Access control
+  expiresAt       DateTime?
+  isRevoked       Boolean     @default(false)
+  
+  // Tracking
+  accessCount     Int         @default(0)
+  lastAccessedAt  DateTime?
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  folder          Folder      @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  
+  @@map("folder_shares")
+  @@index([folderId])
+  @@index([sharedWith])
+}
+
+model DocumentComment {
+  id              String      @id @default(cuid())
+  documentId      String
+  
+  // Comment content
+  content         String
+  authorId        String
+  
+  // Threading
+  parentId        String?     // For reply threads
+  
+  // Status
+  isEdited        Boolean     @default(false)
+  isDeleted       Boolean     @default(false)
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  document        Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  parent          DocumentComment? @relation("CommentThreads", fields: [parentId], references: [id])
+  replies         DocumentComment[] @relation("CommentThreads")
+  
+  @@map("document_comments")
+  @@index([documentId])
+  @@index([authorId])
+}
+
+model DocumentWorkflow {
+  id              String      @id @default(cuid())
+  documentId      String
+  
+  // Workflow details
+  workflowType    WorkflowType
+  name            String
+  description     String?
+  
+  // Workflow configuration
+  steps           Json        // Workflow step definitions
+  currentStep     Int         @default(0)
+  
+  // Status and completion
+  status          WorkflowStatus @default(PENDING)
+  completedAt     DateTime?
+  
+  // Assignment
+  assignedTo      String[]    // Current assignees
+  initiatedBy     String
+  
+  // Deadlines
+  dueDate         DateTime?
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  document        Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  steps_history   WorkflowStep[]
+  
+  @@map("document_workflows")
+  @@index([documentId])
+  @@index([status])
+}
+
+model WorkflowStep {
+  id              String      @id @default(cuid())
+  workflowId      String
+  
+  // Step details
+  stepNumber      Int
+  name            String
+  description     String?
+  
+  // Assignment and completion
+  assignedTo      String
+  completedBy     String?
+  completedAt     DateTime?
+  
+  // Step data
+  action          WorkflowAction
+  decision        String?     // Approve/Reject/etc.
+  comments        String?
+  
+  // Status
+  status          StepStatus  @default(PENDING)
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  workflow        DocumentWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  
+  @@map("workflow_steps")
+  @@index([workflowId])
+  @@index([assignedTo])
+}
+
+model DocumentAuditLog {
+  id              String      @id @default(cuid())
+  documentId      String
+  
+  // Action details
+  action          AuditAction
+  description     String
+  
+  // Actor
+  userId          String
+  userRole        String?
+  ipAddress       String?
+  userAgent       String?
+  
+  // Context
+  metadata        Json?       // Additional context data
+  oldValues       Json?       // Previous values (for updates)
+  newValues       Json?       // New values (for updates)
+  
+  timestamp       DateTime    @default(now())
+  
+  // Relations
+  document        Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  @@map("document_audit_logs")
+  @@index([documentId])
+  @@index([userId])
+  @@index([action])
+  @@index([timestamp])
+}
+
+model DocumentTemplate {
+  id              String      @id @default(cuid())
+  name            String      @unique
+  description     String?
+  
+  // Template configuration
+  category        DocumentCategory
+  fileFormat      String      // docx, pdf, etc.
+  templatePath    String      // Path to template file
+  
+  // Template variables
+  variables       Json        // Available template variables
+  
+  // Usage tracking
+  usageCount      Int         @default(0)
+  
+  // Status
+  isActive        Boolean     @default(true)
+  
+  // Authoring
+  createdBy       String
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@map("document_templates")
+  @@index([category])
+}
+
+model RetentionPolicy {
+  id              String      @id @default(cuid())
+  name            String      @unique
+  description     String?
+  
+  // Policy rules
+  retentionPeriod Int         // Days to retain
+  retentionPeriodDays Int     // Alias for compatibility
+  category        DocumentCategory?
+  documentTypes   DocumentType[]
+  conditions      Json?       // Additional policy conditions
+  
+  // Actions
+  action          RetentionAction @default(ARCHIVE) // Alias for actionOnExpiry
+  actionOnExpiry  RetentionAction @default(ARCHIVE)
+  notifyBefore    Int?        // Days before expiry to notify
+  
+  // Status
+  isActive        Boolean     @default(true)
+  
+  // Authoring
+  createdBy       String
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@map("retention_policies")
+}
+
+model RetentionJob {
+  id              String      @id @default(cuid())
+  policyId        String      // Reference to policy
+  status          JobStatus   @default(PENDING)
+  documentCount   Int         @default(0)
+  processedCount  Int         @default(0)
+  errorCount      Int         @default(0)
+  failedCount     Int         @default(0)  // For compatibility
+  dryRun          Boolean     @default(false)
+  
+  // Timing
+  startedAt       DateTime    @default(now())
+  completedAt     DateTime?
+  
+  // Results
+  results         Json?       // Job execution results
+  errors          Json?       // Any errors encountered
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@map("retention_jobs")
+}
+
+model WorkflowTemplate {
+  id              String      @id @default(cuid())
+  name            String
+  description     String?
+  
+  // Template configuration
+  trigger         String      // What triggers this workflow
+  documentCategory DocumentCategory?
+  documentType    DocumentType?
+  
+  // Workflow definition
+  steps           Json        // Step definitions
+  
+  // Status
+  isActive        Boolean     @default(true)
+  
+  // Authoring
+  createdBy       String
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  instances       WorkflowInstance[]
+  
+  @@map("workflow_templates")
+}
+
+model WorkflowInstance {
+  id              String      @id @default(cuid())
+  templateId      String
+  documentId      String
+  
+  // Instance details
+  status          WorkflowStatus @default(PENDING)
+  currentStep     Int         @default(0)
+  
+  // Assignment
+  initiatedBy     String
+  initiatedAt     DateTime    @default(now())  // For compatibility
+  
+  // Timing
+  startedAt       DateTime    @default(now())
+  completedAt     DateTime?
+  
+  // Metadata
+  metadata        Json?       // Additional instance metadata
+  
+  // Relations
+  template        WorkflowTemplate @relation(fields: [templateId], references: [id])
+  stepExecutions  WorkflowStepExecution[]
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@map("workflow_instances")
+}
+
+model WorkflowStepExecution {
+  id              String      @id @default(cuid())
+  instanceId      String
+  stepIndex       Int
+  stepId          String      // For compatibility with existing code
+  
+  // Step details
+  assigneeId      String
+  status          StepStatus  @default(PENDING)
+  
+  // Execution
+  assignedAt      DateTime    @default(now())
+  completedAt     DateTime?
+  completedBy     String?
+  
+  // Results
+  decision        String?
+  comments        String?
+  data            Json?
+  
+  // Relations
+  instance        WorkflowInstance @relation(fields: [instanceId], references: [id])
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@map("workflow_step_executions")
+}
+
+// Enums
+enum StorageType {
+  LOCAL
+  AWS_S3
+  GOOGLE_DRIVE
+  AZURE_BLOB
+  DROPBOX
+}
+
+enum DocumentCategory {
+  HR_DOCUMENTS
+  EMPLOYEE_RECORDS
+  CONTRACTS
+  POLICIES
+  PROCEDURES
+  TRAINING_MATERIALS
+  FINANCIAL_DOCUMENTS
+  LEGAL_DOCUMENTS
+  COMPLIANCE_DOCUMENTS
+  PERSONAL_DOCUMENTS
+  PROJECT_DOCUMENTS
+  REPORTS
+  FORMS
+  CERTIFICATES
+  OTHER
+}
+
+enum DocumentType {
+  // HR Types
+  EMPLOYEE_CONTRACT
+  JOB_DESCRIPTION
+  PERFORMANCE_REVIEW
+  DISCIPLINARY_ACTION
+  RESIGNATION_LETTER
+  REFERENCE_LETTER
+  
+  // Personal Documents
+  RESUME
+  COVER_LETTER
+  ID_DOCUMENT
+  QUALIFICATION_CERTIFICATE
+  TRAINING_CERTIFICATE
+  MEDICAL_CERTIFICATE
+  
+  // Company Documents
+  POLICY_DOCUMENT
+  PROCEDURE_MANUAL
+  EMPLOYEE_HANDBOOK
+  ORGANIZATIONAL_CHART
+  
+  // Financial
+  PAYSLIP
+  TAX_DOCUMENT
+  EXPENSE_REPORT
+  INVOICE
+  
+  // Legal
+  LEGAL_AGREEMENT
+  COMPLIANCE_REPORT
+  AUDIT_REPORT
+  
+  // General
+  MEMO
+  REPORT
+  PRESENTATION
+  SPREADSHEET
+  IMAGE
+  VIDEO
+  AUDIO
+  ARCHIVE
+  OTHER
+}
+
+enum OwnerType {
+  EMPLOYEE
+  DEPARTMENT
+  SYSTEM
+  EXTERNAL
+}
+
+enum Visibility {
+  PRIVATE
+  INTERNAL
+  DEPARTMENT
+  PUBLIC
+  RESTRICTED
+}
+
+enum DocumentStatus {
+  ACTIVE
+  ARCHIVED
+  DELETED
+  PROCESSING
+  FAILED
+  QUARANTINED
+  REVIEW_REQUIRED
+}
+
+enum WorkflowStatus {
+  NONE
+  PENDING
+  IN_PROGRESS
+  APPROVED
+  REJECTED
+  CANCELLED
+  COMPLETED
+}
+
+enum WorkflowType {
+  APPROVAL
+  REVIEW
+  SIGNATURE
+  COMPLIANCE_CHECK
+  CUSTOM
+}
+
+enum WorkflowAction {
+  APPROVE
+  REJECT
+  REVIEW
+  SIGN
+  COMMENT
+  FORWARD
+}
+
+enum StepStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+  CANCELLED
+}
+
+enum SharePermission {
+  VIEW
+  DOWNLOAD
+  COMMENT
+  EDIT
+  SHARE
+  DELETE
+}
+
+enum AuditAction {
+  UPLOAD
+  DOWNLOAD
+  VIEW
+  EDIT
+  DELETE
+  SHARE
+  UNSHARE
+  MOVE
+  COPY
+  RENAME
+  APPROVE
+  REJECT
+  COMMENT
+  VERSION_CREATE
+  RESTORE
+  ARCHIVE
+  UNARCHIVE
+}
+
+enum RetentionAction {
+  ARCHIVE
+  DELETE
+  NOTIFY_ONLY
+  LEGAL_HOLD
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}

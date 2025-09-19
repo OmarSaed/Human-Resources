@@ -1,0 +1,32 @@
+# Development Dockerfile for React frontend
+FROM node:18-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Install dependencies with multiple registry fallbacks and robust config
+COPY package.json package-lock.json ./
+RUN npm config set fetch-timeout 600000 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm config set fetch-retries 5 && \
+    npm config set maxsockets 15 && \
+    npm config set progress false && \
+    npm config set loglevel warn && \
+    (npm ci --no-audit --no-fund || \
+     (npm config set registry https://registry.npmmirror.com/ && npm ci --no-audit --no-fund) || \
+     (npm config set registry https://registry.yarnpkg.com/ && npm ci --no-audit --no-fund) || \
+     (npm config set registry https://registry.npmjs.org/ && npm ci --no-audit --no-fund))
+
+# Copy source code
+COPY . .
+
+# Expose port 3000 for Vite dev server
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
+
+# Start development server
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

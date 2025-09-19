@@ -1,0 +1,511 @@
+/api/v1/courses:
+  get:
+    summary: List courses
+    description: Retrieve a paginated list of courses with filtering and sorting options
+    tags:
+      - Courses
+    security:
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/PageParam'
+      - $ref: '#/components/parameters/LimitParam'
+      - $ref: '#/components/parameters/SortParam'
+      - name: category
+        in: query
+        description: Filter by course category
+        schema:
+          type: string
+          enum: [TECHNICAL, LEADERSHIP, COMMUNICATION, COMPLIANCE, SAFETY, SOFT_SKILLS, PRODUCT_KNOWLEDGE, SALES, MARKETING, FINANCE, HR, OPERATIONS, OTHER]
+      - name: difficulty
+        in: query
+        description: Filter by difficulty level
+        schema:
+          type: string
+          enum: [BEGINNER, INTERMEDIATE, ADVANCED, EXPERT]
+      - name: status
+        in: query
+        description: Filter by course status
+        schema:
+          type: string
+          enum: [DRAFT, REVIEW, PUBLISHED, ARCHIVED, SUSPENDED]
+      - name: search
+        in: query
+        description: Search in course title and description
+        schema:
+          type: string
+    responses:
+      '200':
+        description: List of courses retrieved successfully
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/APIResponse'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Course'
+                    meta:
+                      type: object
+                      properties:
+                        pagination:
+                          type: object
+                          properties:
+                            page: { type: integer }
+                            limit: { type: integer }
+                            total: { type: integer }
+                            totalPages: { type: integer }
+      '400':
+        $ref: '#/components/responses/BadRequest'
+      '401':
+        $ref: '#/components/responses/Unauthorized'
+      '500':
+        $ref: '#/components/responses/InternalError'
+
+  post:
+    summary: Create course
+    description: Create a new course
+    tags:
+      - Courses
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [title, description, category, duration]
+            properties:
+              title:
+                type: string
+                minLength: 1
+                maxLength: 200
+                example: "Advanced JavaScript Development"
+              description:
+                type: string
+                minLength: 1
+                maxLength: 2000
+                example: "Learn advanced JavaScript concepts including async/await, closures, and design patterns"
+              shortDescription:
+                type: string
+                maxLength: 500
+                example: "Master advanced JavaScript concepts"
+              category:
+                type: string
+                enum: [TECHNICAL, LEADERSHIP, COMMUNICATION, COMPLIANCE, SAFETY, SOFT_SKILLS, PRODUCT_KNOWLEDGE, SALES, MARKETING, FINANCE, HR, OPERATIONS, OTHER]
+                example: TECHNICAL
+              difficulty:
+                type: string
+                enum: [BEGINNER, INTERMEDIATE, ADVANCED, EXPERT]
+                default: BEGINNER
+                example: INTERMEDIATE
+              duration:
+                type: integer
+                minimum: 1
+                example: 120
+              estimatedHours:
+                type: number
+                minimum: 0
+                example: 2.5
+              language:
+                type: string
+                default: "en"
+                example: "en"
+              tags:
+                type: array
+                items:
+                  type: string
+                example: ["javascript", "programming", "web-development"]
+              learningObjectives:
+                type: array
+                items:
+                  type: string
+                example: ["Understand async/await patterns", "Implement design patterns"]
+              prerequisites:
+                type: array
+                items:
+                  type: string
+                example: ["Basic JavaScript knowledge"]
+              instructorId:
+                type: string
+                format: uuid
+                example: "e7f7f1e4-4b8a-4f8a-9b7a-6f7e4d3c2b1a"
+              instructorName:
+                type: string
+                example: "John Smith"
+              thumbnailUrl:
+                type: string
+                format: uri
+                example: "https://cdn.hrms.com/courses/js-advanced-thumb.jpg"
+              trailerUrl:
+                type: string
+                format: uri
+                example: "https://cdn.hrms.com/courses/js-advanced-trailer.mp4"
+              price:
+                type: number
+                minimum: 0
+                example: 99.99
+              currency:
+                type: string
+                default: "USD"
+                example: "USD"
+              accessType:
+                type: string
+                enum: [INTERNAL, PUBLIC, PARTNER, CUSTOMER]
+                default: INTERNAL
+                example: INTERNAL
+    responses:
+      '201':
+        description: Course created successfully
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/APIResponse'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '#/components/schemas/Course'
+      '400':
+        $ref: '#/components/responses/BadRequest'
+      '401':
+        $ref: '#/components/responses/Unauthorized'
+      '403':
+        $ref: '#/components/responses/Forbidden'
+      '500':
+        $ref: '#/components/responses/InternalError'
+
+/api/v1/courses/{courseId}:
+  get:
+    summary: Get course
+    description: Retrieve a specific course by ID
+    tags:
+      - Courses
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: courseId
+        in: path
+        required: true
+        description: Course ID
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '200':
+        description: Course retrieved successfully
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/APIResponse'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '#/components/schemas/Course'
+      '404':
+        $ref: '#/components/responses/NotFound'
+      '401':
+        $ref: '#/components/responses/Unauthorized'
+      '500':
+        $ref: '#/components/responses/InternalError'
+
+  put:
+    summary: Update course
+    description: Update an existing course
+    tags:
+      - Courses
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: courseId
+        in: path
+        required: true
+        description: Course ID
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              title:
+                type: string
+                minLength: 1
+                maxLength: 200
+              description:
+                type: string
+                minLength: 1
+                maxLength: 2000
+              shortDescription:
+                type: string
+                maxLength: 500
+              category:
+                type: string
+                enum: [TECHNICAL, LEADERSHIP, COMMUNICATION, COMPLIANCE, SAFETY, SOFT_SKILLS, PRODUCT_KNOWLEDGE, SALES, MARKETING, FINANCE, HR, OPERATIONS, OTHER]
+              difficulty:
+                type: string
+                enum: [BEGINNER, INTERMEDIATE, ADVANCED, EXPERT]
+              duration:
+                type: integer
+                minimum: 1
+              estimatedHours:
+                type: number
+                minimum: 0
+              tags:
+                type: array
+                items:
+                  type: string
+              learningObjectives:
+                type: array
+                items:
+                  type: string
+              prerequisites:
+                type: array
+                items:
+                  type: string
+              status:
+                type: string
+                enum: [DRAFT, REVIEW, PUBLISHED, ARCHIVED, SUSPENDED]
+    responses:
+      '200':
+        description: Course updated successfully
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/APIResponse'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '#/components/schemas/Course'
+      '400':
+        $ref: '#/components/responses/BadRequest'
+      '401':
+        $ref: '#/components/responses/Unauthorized'
+      '403':
+        $ref: '#/components/responses/Forbidden'
+      '404':
+        $ref: '#/components/responses/NotFound'
+      '500':
+        $ref: '#/components/responses/InternalError'
+
+  delete:
+    summary: Delete course
+    description: Delete a course (soft delete)
+    tags:
+      - Courses
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: courseId
+        in: path
+        required: true
+        description: Course ID
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '204':
+        description: Course deleted successfully
+      '401':
+        $ref: '#/components/responses/Unauthorized'
+      '403':
+        $ref: '#/components/responses/Forbidden'
+      '404':
+        $ref: '#/components/responses/NotFound'
+      '500':
+        $ref: '#/components/responses/InternalError'
+
+/api/v1/courses/{courseId}/publish:
+  post:
+    summary: Publish course
+    description: Publish a course to make it available for enrollment
+    tags:
+      - Courses
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: courseId
+        in: path
+        required: true
+        description: Course ID
+        schema:
+          type: string
+          format: uuid
+    responses:
+      '200':
+        description: Course published successfully
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/APIResponse'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '#/components/schemas/Course'
+      '400':
+        description: Course cannot be published (validation errors)
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/responses/BadRequest'
+      '401':
+        $ref: '#/components/responses/Unauthorized'
+      '403':
+        $ref: '#/components/responses/Forbidden'
+      '404':
+        $ref: '#/components/responses/NotFound'
+      '500':
+        $ref: '#/components/responses/InternalError'
+
+/api/v1/courses/{courseId}/enroll:
+  post:
+    summary: Enroll in course
+    description: Enroll the current user in a course
+    tags:
+      - Enrollments
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: courseId
+        in: path
+        required: true
+        description: Course ID
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              dueDate:
+                type: string
+                format: date-time
+                description: Optional completion deadline
+              isRequired:
+                type: boolean
+                default: false
+                description: Whether enrollment is mandatory
+    responses:
+      '201':
+        description: Enrolled successfully
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/APIResponse'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '#/components/schemas/Enrollment'
+      '400':
+        description: Cannot enroll (already enrolled, course not available, etc.)
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/responses/BadRequest'
+      '401':
+        $ref: '#/components/responses/Unauthorized'
+      '404':
+        $ref: '#/components/responses/NotFound'
+      '500':
+        $ref: '#/components/responses/InternalError'
+
+/api/v1/courses/featured:
+  get:
+    summary: Get featured courses
+    description: Retrieve featured courses for homepage display
+    tags:
+      - Courses
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: limit
+        in: query
+        description: Number of featured courses to return
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 6
+    responses:
+      '200':
+        description: Featured courses retrieved successfully
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/APIResponse'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Course'
+      '401':
+        $ref: '#/components/responses/Unauthorized'
+      '500':
+        $ref: '#/components/responses/InternalError'
+
+/api/v1/courses/recommendations:
+  get:
+    summary: Get course recommendations
+    description: Get personalized course recommendations for the current user
+    tags:
+      - Courses
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: limit
+        in: query
+        description: Number of recommendations to return
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 10
+      - name: basedOn
+        in: query
+        description: Basis for recommendations
+        schema:
+          type: string
+          enum: [skills, history, role, popular]
+          default: skills
+    responses:
+      '200':
+        description: Recommendations retrieved successfully
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/APIResponse'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        allOf:
+                          - $ref: '#/components/schemas/Course'
+                          - type: object
+                            properties:
+                              recommendationScore:
+                                type: number
+                                description: Recommendation confidence score (0-1)
+                              recommendationReason:
+                                type: string
+                                description: Why this course was recommended
+      '401':
+        $ref: '#/components/responses/Unauthorized'
+      '500':
+        $ref: '#/components/responses/InternalError'

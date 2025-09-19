@@ -1,0 +1,502 @@
+// This is your Prisma schema file for Time & Attendance Service
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Time Tracking Models
+
+model TimeEntry {
+  id              String     @id @default(uuid())
+  employeeId      String     // Reference to employee from employee-service
+  clockIn         DateTime
+  clockOut        DateTime?
+  breakStart      DateTime?
+  breakEnd        DateTime?
+  totalHours      Decimal?   @db.Decimal(8, 2)
+  regularHours    Decimal?   @db.Decimal(8, 2)
+  overtimeHours   Decimal?   @db.Decimal(8, 2)
+  breakDuration   Int?       // Break duration in minutes
+  workLocation    String?    // Office, Remote, Field, etc.
+  deviceInfo      Json?      // Device used for clock in/out
+  ipAddress       String?
+  gpsLocation     Json?      // GPS coordinates if enabled
+  notes           String?
+  status          TimeEntryStatus @default(ACTIVE)
+  isAutoClockOut  Boolean    @default(false)
+  approvedBy      String?    // Manager who approved
+  approvedAt      DateTime?
+  rejectedBy      String?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  deletedAt       DateTime?
+
+  // Relations
+  corrections     TimeCorrection[]
+  auditLogs       AuditLog[] @relation("AuditLogTimeEntry")
+
+  @@map("time_entries")
+}
+
+model TimeCorrection {
+  id              String     @id @default(uuid())
+  timeEntryId     String
+  employeeId      String
+  requestedBy     String     // Employee or manager requesting correction
+  originalClockIn DateTime?
+  newClockIn      DateTime?
+  originalClockOut DateTime?
+  newClockOut     DateTime?
+  reason          String
+  justification   String?
+  status          CorrectionStatus @default(PENDING)
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectedBy      String?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  timeEntry       TimeEntry  @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+
+  @@map("time_corrections")
+}
+
+// Attendance Models
+
+model AttendanceRecord {
+  id              String     @id @default(uuid())
+  employeeId      String
+  date            DateTime   @db.Date
+  status          AttendanceStatus
+  clockIn         DateTime?
+  clockOut        DateTime?
+  scheduledIn     DateTime?
+  scheduledOut    DateTime?
+  lateMinutes     Int        @default(0)
+  earlyMinutes    Int        @default(0)
+  totalHours      Decimal?   @db.Decimal(8, 2)
+  workLocation    String?
+  notes           String?
+  isHoliday       Boolean    @default(false)
+  isWeekend       Boolean    @default(false)
+  leaveRequestId  String?    // Link to leave request if on leave
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@unique([employeeId, date])
+  @@map("attendance_records")
+}
+
+// Leave Management Models
+
+model LeaveRequest {
+  id              String     @id @default(uuid())
+  employeeId      String
+  leaveTypeId     String
+  startDate       DateTime   @db.Date
+  endDate         DateTime   @db.Date
+  totalDays       Decimal    @db.Decimal(4, 1) // Support half days
+  reason          String
+  description     String?
+  status          LeaveStatus @default(PENDING)
+  appliedAt       DateTime   @default(now())
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectedBy      String?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  cancelledAt     DateTime?
+  cancellationReason String?
+  emergencyContact String?
+  attachments     Json?      // Supporting documents
+  isEmergency     Boolean    @default(false)
+  handoverNotes   String?
+  backupPersonId  String?    // Employee covering duties
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  deletedAt       DateTime?
+
+  // Relations
+  leaveType       LeaveType  @relation(fields: [leaveTypeId], references: [id])
+  auditLogs       AuditLog[] @relation("AuditLogLeaveRequest")
+
+  @@map("leave_requests")
+}
+
+model LeaveType {
+  id              String     @id @default(uuid())
+  name            String     @unique
+  description     String?
+  allowance       Decimal    @db.Decimal(4, 1) // Annual allowance
+  carryForward    Decimal?   @db.Decimal(4, 1) // Max carry forward days
+  maxConsecutive  Int?       // Max consecutive days
+  minAdvanceNotice Int       @default(0) // Days of advance notice required
+  requiresApproval Boolean   @default(true)
+  isPaid          Boolean    @default(true)
+  isActive        Boolean    @default(true)
+  applicableGender String?   // MALE, FEMALE, ALL
+  minServiceMonths Int       @default(0) // Minimum service required
+  color           String?    // UI color representation
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  leaveRequests   LeaveRequest[]
+  leaveBalances   LeaveBalance[]
+
+  @@map("leave_types")
+}
+
+model LeaveBalance {
+  id              String     @id @default(uuid())
+  employeeId      String
+  leaveTypeId     String
+  year            Int
+  allocated       Decimal    @db.Decimal(4, 1)
+  used            Decimal    @db.Decimal(4, 1) @default(0)
+  carried         Decimal    @db.Decimal(4, 1) @default(0) // Carried from previous year
+  remaining       Decimal    @db.Decimal(4, 1) @default(0)
+  lastUpdated     DateTime   @default(now())
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  leaveType       LeaveType  @relation(fields: [leaveTypeId], references: [id])
+
+  @@unique([employeeId, leaveTypeId, year])
+  @@map("leave_balances")
+}
+
+// Schedule Models
+
+model WorkSchedule {
+  id              String     @id @default(uuid())
+  employeeId      String
+  name            String
+  description     String?
+  timezone        String     @default("UTC")
+  isDefault       Boolean    @default(false)
+  effectiveFrom   DateTime   @db.Date
+  effectiveTo     DateTime?  @db.Date
+  weeklyHours     Decimal    @db.Decimal(4, 1) @default(40.0)
+  createdBy       String
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  deletedAt       DateTime?
+
+  // Relations
+  scheduleRules   ScheduleRule[]
+  auditLogs       AuditLog[] @relation("AuditLogWorkSchedule")
+
+  @@map("work_schedules")
+}
+
+model ScheduleRule {
+  id              String     @id @default(uuid())
+  scheduleId      String
+  dayOfWeek       Int        // 0=Sunday, 1=Monday, etc.
+  startTime       String     // HH:MM format
+  endTime         String     // HH:MM format
+  breakDuration   Int        @default(0) // Break duration in minutes
+  isWorkingDay    Boolean    @default(true)
+  isFlexible      Boolean    @default(false)
+  coreStartTime   String?    // Core hours start for flexible schedules
+  coreEndTime     String?    // Core hours end for flexible schedules
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  schedule        WorkSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@unique([scheduleId, dayOfWeek])
+  @@map("schedule_rules")
+}
+
+// Overtime Models
+
+model OvertimeRequest {
+  id              String     @id @default(uuid())
+  employeeId      String
+  date            DateTime   @db.Date
+  startTime       DateTime
+  endTime         DateTime
+  hours           Decimal    @db.Decimal(4, 2)
+  reason          String
+  description     String?
+  status          OvertimeStatus @default(PENDING)
+  requestedAt     DateTime   @default(now())
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectedBy      String?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  rate            Decimal?   @db.Decimal(8, 2) // Overtime rate per hour
+  totalAmount     Decimal?   @db.Decimal(10, 2) // Total overtime compensation
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  deletedAt       DateTime?
+
+  // Relations
+  auditLogs       AuditLog[] @relation("AuditLogOvertimeRequest")
+
+  @@map("overtime_requests")
+}
+
+// Holiday Models
+
+model Holiday {
+  id              String     @id @default(uuid())
+  name            String
+  date            DateTime   @db.Date
+  description     String?
+  type            HolidayType @default(PUBLIC)
+  isRecurring     Boolean    @default(false)
+  country         String?
+  region          String?
+  isOptional      Boolean    @default(false)
+  applicableRoles Json?      // Roles this holiday applies to
+  createdBy       String
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@unique([name, date])
+  @@map("holidays")
+}
+
+// Shift Models
+
+model Shift {
+  id              String     @id @default(uuid())
+  name            String
+  description     String?
+  startTime       String     // HH:MM format
+  endTime         String     // HH:MM format
+  duration        Int        // Duration in minutes
+  breakDuration   Int        @default(0) // Break duration in minutes
+  color           String?    // UI color representation
+  isActive        Boolean    @default(true)
+  isOvernight     Boolean    @default(false) // If shift spans midnight
+  overtimeRate    Decimal?   @db.Decimal(4, 2) // Overtime multiplier
+  nightShiftRate  Decimal?   @db.Decimal(4, 2) // Night shift multiplier
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  assignments     ShiftAssignment[]
+
+  @@map("shifts")
+}
+
+model ShiftAssignment {
+  id              String     @id @default(uuid())
+  employeeId      String
+  shiftId         String
+  date            DateTime   @db.Date
+  status          ShiftStatus @default(SCHEDULED)
+  assignedBy      String
+  assignedAt      DateTime   @default(now())
+  swappedWith     String?    // Employee ID if shift was swapped
+  swapRequestId   String?    // Reference to swap request
+  notes           String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  shift           Shift      @relation(fields: [shiftId], references: [id])
+
+  @@unique([employeeId, date])
+  @@map("shift_assignments")
+}
+
+model ShiftSwapRequest {
+  id              String     @id @default(uuid())
+  requesterId     String     // Employee requesting swap
+  targetId        String     // Employee to swap with
+  requesterShiftDate DateTime @db.Date
+  targetShiftDate DateTime   @db.Date
+  reason          String
+  status          SwapStatus @default(PENDING)
+  requesterApproval Boolean  @default(false)
+  targetApproval  Boolean    @default(false)
+  managerApproval Boolean?
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectedBy      String?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@map("shift_swap_requests")
+}
+
+// Reporting Models
+
+model TimeReport {
+  id              String     @id @default(uuid())
+  employeeId      String
+  periodStart     DateTime   @db.Date
+  periodEnd       DateTime   @db.Date
+  reportType      ReportType
+  totalHours      Decimal    @db.Decimal(8, 2)
+  regularHours    Decimal    @db.Decimal(8, 2)
+  overtimeHours   Decimal    @db.Decimal(8, 2)
+  leaveHours      Decimal    @db.Decimal(8, 2) @default(0)
+  attendanceDays  Int
+  absentDays      Int
+  lateDays        Int
+  averageClockIn  String?    // Average clock in time
+  averageClockOut String?    // Average clock out time
+  reportData      Json       // Detailed report data
+  generatedBy     String
+  generatedAt     DateTime   @default(now())
+  approvedBy      String?
+  approvedAt      DateTime?
+  status          ReportStatus @default(DRAFT)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@unique([employeeId, periodStart, periodEnd, reportType])
+  @@map("time_reports")
+}
+
+// System Models
+
+model AttendancePolicy {
+  id              String     @id @default(uuid())
+  name            String     @unique
+  description     String?
+  graceMinutes    Int        @default(0) // Late arrival grace period
+  maxDailyHours   Decimal    @db.Decimal(4, 2) @default(12.0)
+  minDailyHours   Decimal    @db.Decimal(4, 2) @default(0.0)
+  overtimeThreshold Decimal  @db.Decimal(4, 2) @default(8.0)
+  maxBreakMinutes Int        @default(60)
+  requiresApproval Boolean   @default(false) // Time entry requires approval
+  autoClockOut    Boolean    @default(false) // Auto clock out after max hours
+  gpsTracking     Boolean    @default(false)
+  ipRestriction   Boolean    @default(false)
+  allowedIPs      Json?      // List of allowed IP addresses
+  workLocations   Json?      // Allowed work locations
+  isActive        Boolean    @default(true)
+  effectiveFrom   DateTime   @db.Date
+  effectiveTo     DateTime?  @db.Date
+  createdBy       String
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@map("attendance_policies")
+}
+
+model AuditLog {
+  id              String     @id @default(uuid())
+  entityType      String     // e.g., 'TimeEntry', 'LeaveRequest'
+  entityId        String
+  action          String     // e.g., 'CREATE', 'UPDATE', 'DELETE'
+  changes         Json?      // What was changed
+  performedBy     String     // User ID who performed the action
+  ipAddress       String?
+  userAgent       String?
+  timestamp       DateTime   @default(now())
+
+  // Relations (optional foreign keys for better querying)
+  timeEntry       TimeEntry? @relation("AuditLogTimeEntry", fields: [entityId], references: [id], map: "audit_log_time_entry_fkey")
+  leaveRequest    LeaveRequest? @relation("AuditLogLeaveRequest", fields: [entityId], references: [id], map: "audit_log_leave_request_fkey")
+  overtimeRequest OvertimeRequest? @relation("AuditLogOvertimeRequest", fields: [entityId], references: [id], map: "audit_log_overtime_request_fkey")
+  workSchedule    WorkSchedule? @relation("AuditLogWorkSchedule", fields: [entityId], references: [id], map: "audit_log_work_schedule_fkey")
+
+  @@map("audit_logs")
+}
+
+// Enums
+
+enum TimeEntryStatus {
+  ACTIVE
+  COMPLETED
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  CORRECTED
+}
+
+enum CorrectionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  HALF_DAY
+  ON_LEAVE
+  HOLIDAY
+  WEEKEND
+  SICK
+  WORK_FROM_HOME
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+enum OvertimeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+enum HolidayType {
+  PUBLIC
+  RELIGIOUS
+  NATIONAL
+  REGIONAL
+  COMPANY
+}
+
+enum ShiftStatus {
+  SCHEDULED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum SwapStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+enum ReportType {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  CUSTOM
+}
+
+enum ReportStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+}

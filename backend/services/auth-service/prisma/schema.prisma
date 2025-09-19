@@ -1,0 +1,193 @@
+// Prisma schema for auth service
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  firstName String
+  lastName  String
+  
+  // Role and permissions
+  role        UserRole @default(EMPLOYEE)
+  permissions Permission[]
+  
+  // Authentication settings
+  isActive      Boolean @default(true)
+  emailVerified Boolean @default(false)
+  
+  // MFA settings
+  mfaEnabled    Boolean @default(false)
+  mfaSecret     String?
+  backupCodes   String[]
+  
+  // Password reset
+  resetToken       String?
+  resetTokenExpiry DateTime?
+  
+  // Email verification
+  verificationToken String?
+  
+  // Account security
+  lastLogin        DateTime?
+  lastLoginIP      String?
+  failedLoginCount Int      @default(0)
+  lockedUntil      DateTime?
+  
+  // Session management
+  sessions         Session[]
+  refreshTokens    RefreshToken[]
+  
+  // Audit trail
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+  updatedBy String?
+  
+  // Relations
+  auditLogs AuditLog[]
+  
+  @@map("users")
+}
+
+model Permission {
+  id       String @id @default(uuid())
+  resource String
+  action   String
+  
+  // Relations
+  users User[]
+  roles Role[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([resource, action])
+  @@map("permissions")
+}
+
+model Role {
+  id          String @id @default(uuid())
+  name        String @unique
+  description String?
+  
+  // Relations
+  permissions Permission[]
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("roles")
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  sessionId String   @unique
+  data      Json
+  expiresAt DateTime
+  
+  // Device and location info
+  userAgent String?
+  ipAddress String?
+  device    String?
+  location  String?
+  
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("sessions")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  isRevoked Boolean  @default(false)
+  
+  // Device tracking
+  userAgent String?
+  ipAddress String?
+  
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("refresh_tokens")
+}
+
+model AuditLog {
+  id       String   @id @default(uuid())
+  userId   String?
+  action   String
+  resource String
+  details  Json?
+  
+  // Request information
+  ipAddress String?
+  userAgent String?
+  endpoint  String?
+  method    String?
+  
+  // Status
+  success Boolean @default(true)
+  error   String?
+  
+  // Relations
+  user User? @relation(fields: [userId], references: [id])
+  
+  timestamp DateTime @default(now())
+  
+  @@map("audit_logs")
+}
+
+model LoginAttempt {
+  id        String   @id @default(uuid())
+  email     String
+  ipAddress String
+  userAgent String?
+  success   Boolean
+  reason    String?
+  
+  timestamp DateTime @default(now())
+  
+  @@map("login_attempts")
+}
+
+model PasswordPolicy {
+  id                    String @id @default(uuid())
+  minLength             Int    @default(8)
+  requireUppercase      Boolean @default(true)
+  requireLowercase      Boolean @default(true)
+  requireNumbers        Boolean @default(true)
+  requireSpecialChars   Boolean @default(true)
+  preventReuse          Int    @default(5)
+  maxAge                Int    @default(90) // days
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("password_policies")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  HR_MANAGER
+  HR_SPECIALIST
+  DEPARTMENT_MANAGER
+  EMPLOYEE
+}

@@ -1,0 +1,456 @@
+# API Gateway Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: hrms
+  labels:
+    app: api-gateway
+    tier: gateway
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  selector:
+    app: api-gateway
+
+---
+# API Gateway Service (ALB will handle external access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: hrms-api-gateway
+  namespace: hrms
+  labels:
+    app: api-gateway
+    tier: gateway
+  annotations:
+    # Service-level annotations for AWS Load Balancer Controller
+    service.beta.kubernetes.io/aws-load-balancer-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/health"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "8000"
+spec:
+  type: ClusterIP  # Changed from LoadBalancer - ALB handles external access
+  ports:
+  - port: 8000
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  selector:
+    app: api-gateway
+
+---
+# Auth Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: hrms-auth-service
+  namespace: hrms
+  labels:
+    app: auth-service
+    tier: backend
+    service: hrms-auth
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/health"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3001
+    targetPort: 3001
+    protocol: TCP
+    name: http
+  selector:
+    app: auth-service
+
+---
+# Employee Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: hrms-employee-service
+  namespace: hrms
+  labels:
+    app: employee-service
+    tier: backend
+    service: hrms-employee
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/health"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3002
+    targetPort: 3002
+    protocol: TCP
+    name: http
+  selector:
+    app: employee-service
+
+---
+# Performance Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: hrms-performance-service
+  namespace: hrms
+  labels:
+    app: performance-service
+    tier: backend
+    service: hrms-performance
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/health"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3004
+    targetPort: 3004
+    protocol: TCP
+    name: http
+  selector:
+    app: performance-service
+
+---
+# Learning Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: hrms-learning-service
+  namespace: hrms
+  labels:
+    app: learning-service
+    tier: backend
+    service: hrms-learning
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/health"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3005
+    targetPort: 3005
+    protocol: TCP
+    name: http
+  selector:
+    app: learning-service
+
+---
+# Recruitment Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: hrms-recruitment-service
+  namespace: hrms
+  labels:
+    app: recruitment-service
+    tier: backend
+    service: hrms-recruitment
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/health"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3006
+    targetPort: 3006
+    protocol: TCP
+    name: http
+  selector:
+    app: recruitment-service
+
+---
+# Document Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: hrms-document-service
+  namespace: hrms
+  labels:
+    app: document-service
+    tier: backend
+    service: hrms-document
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/health"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3007
+    targetPort: 3007
+    protocol: TCP
+    name: http
+  selector:
+    app: document-service
+
+---
+# Notification Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: hrms-notification-service
+  namespace: hrms
+  labels:
+    app: notification-service
+    tier: backend
+    service: hrms-notification
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/health"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3008
+    targetPort: 3008
+    protocol: TCP
+    name: http
+  selector:
+    app: notification-service
+
+---
+# Time Attendance Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: hrms-time-attendance-service
+  namespace: hrms
+  labels:
+    app: time-attendance-service
+    tier: backend
+    service: hrms-attendance
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/health"
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3003
+    targetPort: 3003
+    protocol: TCP
+    name: http
+  selector:
+    app: time-attendance-service
+
+---
+# Learning Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: learning-service
+  namespace: hrms
+  labels:
+    app: learning-service
+    tier: backend
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3005
+    targetPort: 3005
+    protocol: TCP
+    name: http
+  selector:
+    app: learning-service
+
+---
+# Time Attendance Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: time-attendance-service
+  namespace: hrms
+  labels:
+    app: time-attendance-service
+    tier: backend
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3006
+    targetPort: 3006
+    protocol: TCP
+    name: http
+  selector:
+    app: time-attendance-service
+
+---
+# PostgreSQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  namespace: hrms
+  labels:
+    app: postgresql
+    tier: database
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: postgresql
+
+---
+# Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: hrms
+  labels:
+    app: redis
+    tier: cache
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    targetPort: 6379
+    protocol: TCP
+    name: redis
+  selector:
+    app: redis
+
+---
+# Kafka Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: hrms
+  labels:
+    app: kafka
+    tier: messaging
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9092
+    targetPort: 9092
+    protocol: TCP
+    name: kafka
+  selector:
+    app: kafka
+
+---
+# Elasticsearch Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: hrms
+  labels:
+    app: elasticsearch
+    tier: search
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9200
+    targetPort: 9200
+    protocol: TCP
+    name: http
+  - port: 9300
+    targetPort: 9300
+    protocol: TCP
+    name: transport
+  selector:
+    app: elasticsearch
+
+---
+# MinIO Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: hrms
+  labels:
+    app: minio
+    tier: storage
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9000
+    targetPort: 9000
+    protocol: TCP
+    name: api
+  - port: 9001
+    targetPort: 9001
+    protocol: TCP
+    name: console
+  selector:
+    app: minio
+
+---
+# Prometheus Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: hrms-monitoring
+  labels:
+    app: prometheus
+    tier: monitoring
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9090
+    targetPort: 9090
+    protocol: TCP
+    name: web
+  selector:
+    app: prometheus
+
+---
+# Grafana Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: hrms-monitoring
+  labels:
+    app: grafana
+    tier: monitoring
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3030
+    targetPort: 3030
+    protocol: TCP
+    name: web
+  selector:
+    app: grafana
+
+---
+# Jaeger Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+  namespace: hrms-monitoring
+  labels:
+    app: jaeger
+    tier: monitoring
+spec:
+  type: ClusterIP
+  ports:
+  - port: 16686
+    targetPort: 16686
+    protocol: TCP
+    name: ui
+  - port: 14268
+    targetPort: 14268
+    protocol: TCP
+    name: collector
+  - port: 6831
+    targetPort: 6831
+    protocol: UDP
+    name: agent-compact
+  - port: 5778
+    targetPort: 5778
+    protocol: TCP
+    name: agent-configs
+  selector:
+    app: jaeger

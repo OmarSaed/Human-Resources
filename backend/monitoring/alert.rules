@@ -1,0 +1,93 @@
+groups:
+- name: hrms.rules
+  rules:
+  
+  # High API response time
+  - alert: HighAPIResponseTime
+    expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High API response time detected"
+      description: "95th percentile response time is {{ $value }}s for {{ $labels.job }}"
+
+  # High error rate
+  - alert: HighErrorRate
+    expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) * 100 > 5
+    for: 2m
+    labels:
+      severity: critical
+    annotations:
+      summary: "High error rate detected"
+      description: "Error rate is {{ $value }}% for {{ $labels.job }}"
+
+  # Service down
+  - alert: ServiceDown
+    expr: up == 0
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Service is down"
+      description: "{{ $labels.job }} service is down"
+
+  # High CPU usage
+  - alert: HighCPUUsage
+    expr: (100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)) > 80
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High CPU usage detected"
+      description: "CPU usage is {{ $value }}% on {{ $labels.instance }}"
+
+  # High memory usage
+  - alert: HighMemoryUsage
+    expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High memory usage detected"
+      description: "Memory usage is {{ $value }}% on {{ $labels.instance }}"
+
+  # High disk usage
+  - alert: HighDiskUsage
+    expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 85
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High disk usage detected"
+      description: "Disk usage is {{ $value }}% on {{ $labels.instance }}"
+
+  # Database connection pool exhaustion
+  - alert: DatabaseConnectionPoolHigh
+    expr: database_connections_active / database_connections_max > 0.8
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Database connection pool utilization high"
+      description: "Connection pool is {{ $value }}% full for {{ $labels.job }}"
+
+  # Kafka consumer lag
+  - alert: KafkaConsumerLag
+    expr: kafka_consumer_lag_sum > 1000
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High Kafka consumer lag"
+      description: "Consumer lag is {{ $value }} messages for {{ $labels.topic }}"
+
+  # Failed authentication attempts
+  - alert: HighFailedAuthAttempts
+    expr: rate(auth_failed_attempts_total[5m]) > 10
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High failed authentication attempts"
+      description: "{{ $value }} failed authentication attempts per second"

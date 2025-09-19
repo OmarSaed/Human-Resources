@@ -1,0 +1,201 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hrms-config
+  namespace: hrms
+data:
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  
+  # Database Configuration
+  DB_HOST: "postgresql.hrms.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "hrms_production"
+  
+  # Redis Configuration
+  REDIS_HOST: "redis.hrms.svc.cluster.local"
+  REDIS_PORT: "6379"
+  
+  # Kafka Configuration
+  KAFKA_BROKERS: "kafka.hrms.svc.cluster.local:9092"
+  
+  # Elasticsearch Configuration
+  ELASTICSEARCH_HOST: "elasticsearch.hrms.svc.cluster.local"
+  ELASTICSEARCH_PORT: "9200"
+  
+  # MinIO Configuration
+  MINIO_ENDPOINT: "minio.hrms.svc.cluster.local"
+  MINIO_PORT: "9000"
+  MINIO_BUCKET: "hrms-documents"
+  
+  # Vault Configuration
+  VAULT_ADDR: "http://vault.hrms.svc.cluster.local:8200"
+  
+  # JWT Configuration
+  JWT_EXPIRES_IN: "7d"
+  JWT_REFRESH_EXPIRES_IN: "30d"
+  
+  # Email Configuration
+  SMTP_HOST: "smtp.gmail.com"
+  SMTP_PORT: "587"
+  SMTP_SECURE: "true"
+  
+  # Service Ports
+  API_GATEWAY_PORT: "8000"
+  AUTH_SERVICE_PORT: "3001"
+  EMPLOYEE_SERVICE_PORT: "3002"
+  RECRUITMENT_SERVICE_PORT: "3003"
+  PERFORMANCE_SERVICE_PORT: "3004"
+  LEARNING_SERVICE_PORT: "3005"
+  TIME_ATTENDANCE_SERVICE_PORT: "3006"
+  DOCUMENT_SERVICE_PORT: "3007"
+  NOTIFICATION_SERVICE_PORT: "3008"
+  ANALYTICS_SERVICE_PORT: "3009"
+  
+  # Rate Limiting
+  RATE_LIMIT_WINDOW_MS: "900000"
+  RATE_LIMIT_MAX_REQUESTS: "100"
+  
+  # CORS Configuration
+  CORS_ORIGIN: "https://hrms.company.com,https://app.company.com"
+  CORS_CREDENTIALS: "true"
+  
+  # Monitoring
+  PROMETHEUS_ENABLED: "true"
+  JAEGER_ENABLED: "true"
+  
+  # File Upload
+  MAX_FILE_SIZE: "10485760"
+  ALLOWED_FILE_TYPES: "pdf,doc,docx,txt,jpg,jpeg,png,csv,xlsx"
+  
+  # Storage Configuration
+  STORAGE_TYPE: "s3"
+  UPLOAD_DIR: "./uploads"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hrms-config-staging
+  namespace: hrms-staging
+data:
+  NODE_ENV: "staging"
+  LOG_LEVEL: "debug"
+  
+  # Database Configuration
+  DB_HOST: "postgresql-staging.hrms-staging.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "hrms_staging"
+  
+  # Redis Configuration
+  REDIS_HOST: "redis-staging.hrms-staging.svc.cluster.local"
+  REDIS_PORT: "6379"
+  
+  # Kafka Configuration
+  KAFKA_BROKERS: "kafka-staging.hrms-staging.svc.cluster.local:9092"
+  
+  # JWT Configuration
+  JWT_EXPIRES_IN: "24h"
+  JWT_REFRESH_EXPIRES_IN: "7d"
+  
+  # Service Ports
+  API_GATEWAY_PORT: "8000"
+  AUTH_SERVICE_PORT: "3001"
+  EMPLOYEE_SERVICE_PORT: "3002"
+  RECRUITMENT_SERVICE_PORT: "3003"
+  PERFORMANCE_SERVICE_PORT: "3004"
+  LEARNING_SERVICE_PORT: "3005"
+  TIME_ATTENDANCE_SERVICE_PORT: "3006"
+  DOCUMENT_SERVICE_PORT: "3007"
+  NOTIFICATION_SERVICE_PORT: "3008"
+  ANALYTICS_SERVICE_PORT: "3009"
+  
+  # CORS Configuration
+  CORS_ORIGIN: "https://staging.hrms.company.com"
+  CORS_CREDENTIALS: "true"
+  
+  # Monitoring
+  PROMETHEUS_ENABLED: "true"
+  JAEGER_ENABLED: "true"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: hrms
+data:
+  nginx.conf: |
+    events {
+        worker_connections 1024;
+    }
+    
+    http {
+        upstream api_gateway {
+            server api-gateway:3000;
+        }
+        
+        server {
+            listen 80;
+            server_name api.hrms.company.com;
+            
+            # Redirect HTTP to HTTPS
+            return 301 https://$server_name$request_uri;
+        }
+        
+        server {
+            listen 443 ssl http2;
+            server_name api.hrms.company.com;
+            
+            ssl_certificate /etc/ssl/certs/hrms.crt;
+            ssl_certificate_key /etc/ssl/private/hrms.key;
+            ssl_protocols TLSv1.2 TLSv1.3;
+            ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
+            ssl_prefer_server_ciphers off;
+            
+            # Security headers
+            add_header X-Frame-Options DENY always;
+            add_header X-Content-Type-Options nosniff always;
+            add_header X-XSS-Protection "1; mode=block" always;
+            add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+            add_header Content-Security-Policy "default-src 'self'" always;
+            
+            # Rate limiting
+            limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+            limit_req zone=api burst=20 nodelay;
+            
+            # API proxy
+            location / {
+                proxy_pass http://api_gateway;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                
+                # Timeouts
+                proxy_connect_timeout 60s;
+                proxy_send_timeout 60s;
+                proxy_read_timeout 60s;
+                
+                # Buffer settings
+                proxy_buffering on;
+                proxy_buffer_size 4k;
+                proxy_buffers 8 4k;
+            }
+            
+            # Health check endpoint
+            location /health {
+                access_log off;
+                proxy_pass http://api_gateway/health;
+            }
+            
+            # Metrics endpoint (restricted)
+            location /metrics {
+                allow 10.0.0.0/8;
+                allow 172.16.0.0/12;
+                allow 192.168.0.0/16;
+                deny all;
+                proxy_pass http://api_gateway/metrics;
+            }
+        }
+    }

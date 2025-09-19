@@ -1,0 +1,610 @@
+services:
+  # =============================================================================
+  # INFRASTRUCTURE SERVICES
+  # =============================================================================
+  
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: hrms-postgres
+    restart: unless-stopped
+    env_file:
+      - backend/services/shared/.env
+    environment:
+      POSTGRES_DB: hrms
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_MULTIPLE_DATABASES: hrms_auth,hrms_employee,hrms_performance,hrms_learning,hrms_recruitment,hrms_notification,hrms_document,hrms_attendance
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/scripts/init-multiple-databases.sh:/docker-entrypoint-initdb.d/init-multiple-databases.sh
+    networks:
+      - hrms-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hrms"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: hrms-redis
+    restart: unless-stopped
+    env_file:
+      - backend/services/shared/.env
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - hrms-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Apache Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: hrms-zookeeper
+    restart: unless-stopped
+    env_file:
+      - backend/services/shared/.env
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    networks:
+      - hrms-network
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: hrms-kafka
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    env_file:
+      - backend/services/shared/.env
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - hrms-network
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # =============================================================================
+  # MONITORING & OBSERVABILITY
+  # =============================================================================
+  
+  # Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: hrms-prometheus
+    restart: unless-stopped
+    env_file:
+      - backend/services/shared/.env
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./backend/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    networks:
+      - hrms-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Grafana for dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: hrms-grafana
+    restart: unless-stopped
+    ports:
+      - "3030:3000"
+    env_file:
+      - backend/services/shared/.env
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
+      GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./backend/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+      - ./backend/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    networks:
+      - hrms-network
+    depends_on:
+      - prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Jaeger for distributed tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: hrms-jaeger
+    restart: unless-stopped
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+    env_file:
+      - backend/services/shared/.env
+    environment:
+      COLLECTOR_OTLP_ENABLED: true
+    volumes:
+      - jaeger_data:/tmp
+    networks:
+      - hrms-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:16686/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # =============================================================================
+  # HRMS MICROSERVICES
+  # =============================================================================
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./backend/services
+      dockerfile: api-gateway/Dockerfile
+    container_name: hrms-api-gateway
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - backend/services/shared/.env
+    environment:
+      - NODE_ENV=${NODE_ENV}
+      - API_GATEWAY_PORT=8000
+      - JWT_SECRET=${JWT_SECRET}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - KAFKA_BROKERS=kafka:29092
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - AUTH_SERVICE_PORT=3001
+      - EMPLOYEE_SERVICE_PORT=3002
+      - TIME_ATTENDANCE_SERVICE_PORT=3003
+      - PERFORMANCE_SERVICE_PORT=3004
+      - LEARNING_SERVICE_PORT=3005
+      - RECRUITMENT_SERVICE_PORT=3006
+      - DOCUMENT_SERVICE_PORT=3007
+      - NOTIFICATION_SERVICE_PORT=3008
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    networks:
+      - hrms-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Authentication Service
+  auth-service:
+    build:
+      context: ./backend/services
+      dockerfile: auth-service/Dockerfile
+    container_name: hrms-auth-service
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    env_file:
+      - backend/services/shared/.env
+    environment:
+      - NODE_ENV=${NODE_ENV}
+      - AUTH_SERVICE_PORT=3001
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+      - DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@postgres:5432/hrms_auth
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - KAFKA_BROKERS=kafka:29092
+      - SESSION_SECRET=${SESSION_SECRET}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - EMAIL_FROM=${EMAIL_FROM}
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    networks:
+      - hrms-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Employee Service
+  employee-service:
+    build:
+      context: ./backend/services
+      dockerfile: employee-service/Dockerfile
+    container_name: hrms-employee-service
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    env_file:
+      - backend/services/shared/.env
+    environment:
+      - NODE_ENV=${NODE_ENV}
+      - EMPLOYEE_SERVICE_PORT=3002
+      - JWT_SECRET=${JWT_SECRET}
+      - DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@postgres:5432/hrms_employee
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - KAFKA_BROKERS=kafka:29092
+      - MAX_FILE_SIZE=10485760
+      - UPLOAD_DIR=/app/uploads
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    volumes:
+      - employee_uploads:/app/uploads
+    networks:
+      - hrms-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Time & Attendance Service
+  time-attendance-service:
+    build:
+      context: ./backend/services
+      dockerfile: time-attendance-service/Dockerfile
+    container_name: hrms-time-attendance-service
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    env_file:
+      - backend/services/shared/.env
+    environment:
+      - NODE_ENV=${NODE_ENV}
+      - TIME_ATTENDANCE_SERVICE_PORT=3003
+      - JWT_SECRET=${JWT_SECRET}
+      - DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@postgres:5432/hrms_attendance
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - KAFKA_BROKERS=kafka:29092
+      - DEFAULT_TIMEZONE=UTC
+      - OVERTIME_THRESHOLD=8
+      - MAX_DAILY_HOURS=12
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    networks:
+      - hrms-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Performance Service
+  performance-service:
+    build:
+      context: ./backend/services
+      dockerfile: performance-service/Dockerfile
+    container_name: hrms-performance-service
+    restart: unless-stopped
+    ports:
+      - "3004:3004"
+    env_file:
+      - backend/services/shared/.env
+    environment:
+      - NODE_ENV=${NODE_ENV}
+      - PERFORMANCE_SERVICE_PORT=3004
+      - JWT_SECRET=${JWT_SECRET}
+      - DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@postgres:5432/hrms_performance
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - KAFKA_BROKERS=kafka:29092
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    networks:
+      - hrms-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Learning Service
+  learning-service:
+    build:
+      context: ./backend/services
+      dockerfile: learning-service/Dockerfile
+    container_name: hrms-learning-service
+    restart: unless-stopped
+    ports:
+      - "3005:3005"
+    env_file:
+      - backend/services/shared/.env
+    environment:
+      - NODE_ENV=${NODE_ENV}
+      - LEARNING_SERVICE_PORT=3005
+      - JWT_SECRET=${JWT_SECRET}
+      - DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@postgres:5432/hrms_learning
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - KAFKA_BROKERS=kafka:29092
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    networks:
+      - hrms-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Recruitment Service
+  recruitment-service:
+    build:
+      context: ./backend/services
+      dockerfile: recruitment-service/Dockerfile
+    container_name: hrms-recruitment-service
+    restart: unless-stopped
+    ports:
+      - "3006:3006"
+    env_file:
+      - backend/services/shared/.env
+    environment:
+      - NODE_ENV=${NODE_ENV}
+      - RECRUITMENT_SERVICE_PORT=3006
+      - JWT_SECRET=${JWT_SECRET}
+      - DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@postgres:5432/hrms_recruitment
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - KAFKA_BROKERS=kafka:29092
+      - UPLOAD_DIR=/app/uploads
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    volumes:
+      - recruitment_uploads:/app/uploads
+    networks:
+      - hrms-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Document Service
+  document-service:
+    build:
+      context: ./backend/services
+      dockerfile: document-service/Dockerfile
+    container_name: hrms-document-service
+    restart: unless-stopped
+    ports:
+      - "3007:3007"
+    env_file:
+      - backend/services/shared/.env
+    environment:
+      - NODE_ENV=${NODE_ENV}
+      - DOCUMENT_SERVICE_PORT=3007
+      - JWT_SECRET=${JWT_SECRET}
+      - DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@postgres:5432/hrms_document
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - KAFKA_BROKERS=kafka:29092
+      - UPLOAD_DIR=/app/uploads
+      - MAX_FILE_SIZE=52428800
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    volumes:
+      - document_uploads:/app/uploads
+    networks:
+      - hrms-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3007/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Notification Service
+  notification-service:
+    build:
+      context: ./backend/services
+      dockerfile: notification-service/Dockerfile
+    container_name: hrms-notification-service
+    restart: unless-stopped
+    ports:
+      - "3008:3008"
+    env_file:
+      - backend/services/shared/.env
+    environment:
+      - NODE_ENV=${NODE_ENV}
+      - NOTIFICATION_SERVICE_PORT=3008
+      - JWT_SECRET=${JWT_SECRET}
+      - DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@postgres:5432/hrms_notification
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - KAFKA_BROKERS=kafka:29092
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - EMAIL_FROM=${EMAIL_FROM}
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    networks:
+      - hrms-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3008/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # =============================================================================
+  # FRONTEND APPLICATION
+  # =============================================================================
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: hrms-frontend
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+      - "8443:443"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=${NODE_ENV}
+      - VITE_API_URL=http://localhost:8000/api/v1
+      - VITE_APP_NAME=HRMS
+      - VITE_APP_VERSION=1.0.0
+    networks:
+      - hrms-network
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+networks:
+  hrms-network:
+    driver: bridge
+    name: hrms-network
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+volumes:
+  # Database volumes
+  postgres_data:
+    name: hrms-postgres-data
+  redis_data:
+    name: hrms-redis-data
+  
+  # Kafka volumes
+  zookeeper_data:
+    name: hrms-zookeeper-data
+  zookeeper_logs:
+    name: hrms-zookeeper-logs
+  kafka_data:
+    name: hrms-kafka-data
+  
+  # Monitoring volumes
+  prometheus_data:
+    name: hrms-prometheus-data
+  grafana_data:
+    name: hrms-grafana-data
+  jaeger_data:
+    name: hrms-jaeger-data
+  
+  # Application uploads
+  employee_uploads:
+    name: hrms-employee-uploads
+  recruitment_uploads:
+    name: hrms-recruitment-uploads
+  document_uploads:
+    name: hrms-document-uploads

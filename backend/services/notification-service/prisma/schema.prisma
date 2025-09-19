@@ -1,0 +1,163 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model NotificationTemplate {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  type        NotificationType
+  channel     NotificationChannel
+  subject     String?
+  body        String
+  variables   Json     // Template variables
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  notifications Notification[]
+  
+  @@map("notification_templates")
+}
+
+model Notification {
+  id                String              @id @default(cuid())
+  templateId        String?
+  type              NotificationType
+  channel           NotificationChannel
+  priority          NotificationPriority @default(NORMAL)
+  
+  // Recipients
+  userId            String?
+  email             String?
+  phoneNumber       String?
+  deviceToken       String?
+  
+  // Content
+  subject           String?
+  message           String
+  data              Json?               // Additional data for push notifications
+  
+  // Tracking
+  status            NotificationStatus  @default(PENDING)
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  failedAt          DateTime?
+  errorMessage      String?
+  
+  // Metadata
+  correlationId     String?
+  source            String              // Which service triggered this
+  retryCount        Int                 @default(0)
+  maxRetries        Int                 @default(3)
+  
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  
+  template          NotificationTemplate? @relation(fields: [templateId], references: [id])
+  
+  @@map("notifications")
+  @@index([userId])
+  @@index([status])
+  @@index([correlationId])
+  @@index([createdAt])
+}
+
+model NotificationPreference {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  
+  // Channel preferences
+  emailEnabled      Boolean @default(true)
+  smsEnabled        Boolean @default(false)
+  pushEnabled       Boolean @default(true)
+  
+  // Type preferences
+  employeeUpdates   Boolean @default(true)
+  systemAlerts      Boolean @default(true)
+  recruitmentUpdates Boolean @default(true)
+  performanceUpdates Boolean @default(true)
+  learningUpdates   Boolean @default(true)
+  attendanceAlerts  Boolean @default(true)
+  
+  // Timing preferences
+  quietHoursStart   String? // Format: "HH:MM"
+  quietHoursEnd     String? // Format: "HH:MM"
+  timezone          String  @default("UTC")
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("notification_preferences")
+}
+
+model NotificationLog {
+  id            String   @id @default(cuid())
+  notificationId String
+  action        String   // sent, delivered, read, failed, retry
+  details       Json?
+  timestamp     DateTime @default(now())
+  
+  @@map("notification_logs")
+  @@index([notificationId])
+  @@index([timestamp])
+}
+
+enum NotificationType {
+  EMPLOYEE_WELCOME
+  EMPLOYEE_UPDATED
+  EMPLOYEE_TERMINATED
+  
+  RECRUITMENT_APPLICATION_RECEIVED
+  RECRUITMENT_INTERVIEW_SCHEDULED
+  RECRUITMENT_STATUS_UPDATED
+  
+  PERFORMANCE_REVIEW_DUE
+  PERFORMANCE_REVIEW_COMPLETED
+  PERFORMANCE_GOAL_ASSIGNED
+  
+  LEARNING_COURSE_ASSIGNED
+  LEARNING_COURSE_COMPLETED
+  LEARNING_CERTIFICATION_EARNED
+  
+  ATTENDANCE_LATE_CHECKIN
+  ATTENDANCE_MISSING_CHECKOUT
+  ATTENDANCE_LEAVE_APPROVED
+  ATTENDANCE_LEAVE_REJECTED
+  
+  SYSTEM_ALERT
+  SYSTEM_MAINTENANCE
+  
+  CUSTOM
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  PUSH
+  IN_APP
+}
+
+enum NotificationPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  CANCELLED
+}

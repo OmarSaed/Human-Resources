@@ -1,0 +1,342 @@
+# API Gateway Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: hrms
+  labels:
+    app: api-gateway
+    tier: gateway
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        tier: gateway
+    spec:
+      containers:
+      - name: api-gateway
+        image: hrms/api-gateway:latest
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - configMapRef:
+            name: hrms-config
+        - secretRef:
+            name: hrms-secrets
+        env:
+        - name: SERVICE_NAME
+          value: "api-gateway"
+        - name: PORT
+          value: "8000"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: logs
+          mountPath: /app/logs
+      volumes:
+      - name: logs
+        emptyDir: {}
+      imagePullSecrets:
+      - name: regcred
+
+---
+# Auth Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: hrms
+  labels:
+    app: auth-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+        tier: backend
+    spec:
+      containers:
+      - name: auth-service
+        image: hrms/auth-service:latest
+        ports:
+        - containerPort: 3001
+        envFrom:
+        - configMapRef:
+            name: hrms-config
+        - secretRef:
+            name: hrms-secrets
+        env:
+        - name: SERVICE_NAME
+          value: "auth-service"
+        - name: PORT
+          value: "3001"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# Employee Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: employee-service
+  namespace: hrms
+  labels:
+    app: employee-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: employee-service
+  template:
+    metadata:
+      labels:
+        app: employee-service
+        tier: backend
+    spec:
+      containers:
+      - name: employee-service
+        image: hrms/employee-service:latest
+        ports:
+        - containerPort: 3002
+        envFrom:
+        - configMapRef:
+            name: hrms-config
+        - secretRef:
+            name: hrms-secrets
+        env:
+        - name: SERVICE_NAME
+          value: "employee-service"
+        - name: PORT
+          value: "3002"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# Performance Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: performance-service
+  namespace: hrms
+  labels:
+    app: performance-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: performance-service
+  template:
+    metadata:
+      labels:
+        app: performance-service
+        tier: backend
+    spec:
+      containers:
+      - name: performance-service
+        image: hrms/performance-service:latest
+        ports:
+        - containerPort: 3004
+        envFrom:
+        - configMapRef:
+            name: hrms-config
+        - secretRef:
+            name: hrms-secrets
+        env:
+        - name: SERVICE_NAME
+          value: "performance-service"
+        - name: PORT
+          value: "3004"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3004
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3004
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# Learning Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: learning-service
+  namespace: hrms
+  labels:
+    app: learning-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: learning-service
+  template:
+    metadata:
+      labels:
+        app: learning-service
+        tier: backend
+    spec:
+      containers:
+      - name: learning-service
+        image: hrms/learning-service:latest
+        ports:
+        - containerPort: 3005
+        envFrom:
+        - configMapRef:
+            name: hrms-config
+        - secretRef:
+            name: hrms-secrets
+        env:
+        - name: SERVICE_NAME
+          value: "learning-service"
+        - name: PORT
+          value: "3005"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3005
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3005
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+---
+# Time Attendance Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: time-attendance-service
+  namespace: hrms
+  labels:
+    app: time-attendance-service
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: time-attendance-service
+  template:
+    metadata:
+      labels:
+        app: time-attendance-service
+        tier: backend
+    spec:
+      containers:
+      - name: time-attendance-service
+        image: hrms/time-attendance-service:latest
+        ports:
+        - containerPort: 3006
+        envFrom:
+        - configMapRef:
+            name: hrms-config
+        - secretRef:
+            name: hrms-secrets
+        env:
+        - name: SERVICE_NAME
+          value: "time-attendance-service"
+        - name: PORT
+          value: "3006"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3006
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3006
+          initialDelaySeconds: 5
+          periodSeconds: 5

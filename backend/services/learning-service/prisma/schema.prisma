@@ -1,0 +1,749 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Course {
+  id              String      @id @default(cuid())
+  title           String
+  description     String
+  shortDescription String?
+  
+  // Course metadata
+  category        CourseCategory
+  difficulty      DifficultyLevel @default(BEGINNER)
+  duration        Int         // Duration in minutes
+  estimatedHours  Float       // Estimated completion time
+  language        String      @default("en")
+  tags            String[]
+  
+  // Content and structure
+  syllabus        Json        // Course outline and modules
+  learningObjectives String[]  // What students will learn
+  prerequisites   String[]    // Required prior knowledge
+  
+  // Instructor and authoring
+  instructorId    String?     // Employee ID of instructor
+  instructorName  String?     // External instructor name
+  authorId        String      // Who created the course
+  
+  // Media and resources
+  thumbnailUrl    String?
+  trailerUrl      String?     // Preview video
+  
+  // Pricing and access
+  price           Float?      // Cost (null = free)
+  currency        String      @default("USD")
+  accessType      AccessType  @default(INTERNAL)
+  
+  // Add fields that code expects
+  isPublic        Boolean     @default(false)
+  maxEnrollments  Int?        // Maximum number of enrollments
+  skills          String[]    // Skills taught in course
+  
+  // Status and visibility
+  status          CourseStatus @default(DRAFT)
+  isPublished     Boolean     @default(false)
+  isFeatured      Boolean     @default(false)
+  
+  // Analytics
+  totalEnrollments Int        @default(0)
+  averageRating   Float?      // Calculated from reviews
+  totalReviews    Int         @default(0)
+  
+  // Dates
+  publishedAt     DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  modules         CourseModule[]
+  enrollments     Enrollment[]
+  reviews         CourseReview[]
+  reviewsAlias    Review[]     @relation("ReviewsToCourse")
+  certificates    Certificate[]
+  content         CourseContent[]
+  author          User         @relation("CourseAuthor", fields: [authorId], references: [id])
+  instructor      User?        @relation("CourseInstructor", fields: [instructorId], references: [id])
+  
+  @@map("courses")
+  @@index([category])
+  @@index([status])
+  @@index([difficulty])
+  @@index([publishedAt])
+}
+
+model CourseModule {
+  id              String      @id @default(cuid())
+  courseId        String
+  
+  // Module details
+  title           String
+  description     String?
+  order           Int         // Order within course
+  duration        Int         // Duration in minutes
+  
+  // Content
+  content         Json        // Module content structure
+  resources       Json[]      // Additional resources
+  
+  // Requirements
+  isRequired      Boolean     @default(true)
+  passingScore    Int?        // Required score to pass (if applicable)
+  
+  // Status
+  isPublished     Boolean     @default(false)
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  course          Course      @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessons         Lesson[]
+  assessments     Assessment[]
+  progress        ModuleProgress[]
+  
+  @@map("course_modules")
+  @@index([courseId])
+  @@index([order])
+}
+
+model Lesson {
+  id              String      @id @default(cuid())
+  moduleId        String
+  
+  // Lesson details
+  title           String
+  description     String?
+  order           Int         // Order within module
+  duration        Int         // Duration in minutes
+  
+  // Content
+  type            LessonType
+  content         Json        // Lesson content based on type
+  resources       Json[]      // Downloads, links, etc.
+  
+  // Video-specific fields
+  videoUrl        String?
+  videoThumbnail  String?
+  videoDuration   Int?        // In seconds
+  
+  // Document-specific fields
+  documentUrl     String?
+  documentType    String?     // pdf, ppt, etc.
+  
+  // Interactive content
+  interactiveUrl  String?     // For H5P, SCORM, etc.
+  
+  // Requirements
+  isRequired      Boolean     @default(true)
+  isPreview       Boolean     @default(false) // Can be viewed without enrollment
+  
+  // Status
+  isPublished     Boolean     @default(false)
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  module          CourseModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  progress        LessonProgress[]
+  
+  @@map("lessons")
+  @@index([moduleId])
+  @@index([order])
+}
+
+model Assessment {
+  id              String      @id @default(cuid())
+  moduleId        String?     // Module assessment
+  courseId        String?     // Final course assessment
+  
+  // Assessment details
+  title           String
+  description     String?
+  type            AssessmentType
+  
+  // Configuration
+  questions       Json        // Question data structure
+  timeLimit       Int?        // Time limit in minutes
+  attempts        Int         @default(3) // Max attempts allowed
+  passingScore    Int         @default(70) // Percentage required to pass
+  
+  // Randomization
+  randomizeQuestions Boolean  @default(false)
+  randomizeAnswers   Boolean  @default(false)
+  questionPool       Int?     // Number of questions to show from pool
+  
+  // Availability
+  isRequired      Boolean     @default(true)
+  availableFrom   DateTime?
+  availableUntil  DateTime?
+  
+  // Status
+  isPublished     Boolean     @default(false)
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  module          CourseModule? @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  assessmentAttempts AssessmentAttempt[]
+  
+  @@map("assessments")
+  @@index([moduleId])
+  @@index([courseId])
+}
+
+model Enrollment {
+  id              String      @id @default(cuid())
+  userId          String      // Employee ID
+  courseId        String
+  
+  // Enrollment details
+  status          EnrollmentStatus @default(ENROLLED)
+  progress        Float       @default(0) // Percentage completed
+  
+  // Timing
+  enrolledAt      DateTime    @default(now())
+  startedAt       DateTime?   // When first lesson was accessed
+  completedAt     DateTime?   // When course was completed
+  certificateIssuedAt DateTime?
+  
+  // Assignment info
+  assignedBy      String?     // Manager/HR who assigned
+  dueDate         DateTime?   // Completion deadline
+  isRequired      Boolean     @default(false)
+  
+  // Progress tracking
+  totalTimeSpent  Int         @default(0) // Minutes
+  lastAccessedAt  DateTime?
+  currentLessonId String?
+  
+  // Completion criteria
+  finalScore      Float?      // Overall course score
+  passingScore    Float?      // Required score to pass
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  course          Course      @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  moduleProgress  ModuleProgress[]
+  lessonProgress  LessonProgress[]
+  assessmentAttempts AssessmentAttempt[]
+  certificate     Certificate?
+  
+  @@map("enrollments")
+  @@unique([userId, courseId])
+  @@index([userId])
+  @@index([status])
+  @@index([enrolledAt])
+}
+
+model ModuleProgress {
+  id              String      @id @default(cuid())
+  enrollmentId    String
+  moduleId        String
+  
+  // Progress tracking
+  status          ProgressStatus @default(NOT_STARTED)
+  progress        Float       @default(0) // Percentage completed
+  timeSpent       Int         @default(0) // Minutes
+  
+  // Timing
+  startedAt       DateTime?
+  completedAt     DateTime?
+  lastAccessedAt  DateTime?
+  
+  // Score tracking
+  currentScore    Float?
+  bestScore       Float?
+  attempts        Int         @default(0)
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  enrollment      Enrollment  @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  module          CourseModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  
+  @@map("module_progress")
+  @@unique([enrollmentId, moduleId])
+  @@index([enrollmentId])
+}
+
+model LessonProgress {
+  id              String      @id @default(cuid())
+  enrollmentId    String
+  lessonId        String
+  
+  // Progress tracking
+  status          ProgressStatus @default(NOT_STARTED)
+  progress        Float       @default(0) // Percentage completed
+  timeSpent       Int         @default(0) // Seconds
+  
+  // Video-specific tracking
+  watchTime       Int         @default(0) // Seconds watched
+  lastPosition    Float       @default(0) // Last video position
+  
+  // Interaction tracking
+  interactions    Json[]      // User interactions data
+  notes           String?     // User notes for this lesson
+  
+  // Timing
+  startedAt       DateTime?
+  completedAt     DateTime?
+  lastAccessedAt  DateTime?
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  enrollment      Enrollment  @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  lesson          Lesson      @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  
+  @@map("lesson_progress")
+  @@unique([enrollmentId, lessonId])
+  @@index([enrollmentId])
+}
+
+model AssessmentAttempt {
+  id              String      @id @default(cuid())
+  enrollmentId    String
+  assessmentId    String
+  
+  // Attempt details
+  attemptNumber   Int
+  status          AttemptStatus @default(IN_PROGRESS)
+  
+  // Responses and scoring
+  responses       Json        // User responses to questions
+  score           Float?      // Percentage score
+  passed          Boolean?    // Whether attempt passed
+  
+  // Timing
+  startedAt       DateTime    @default(now())
+  submittedAt     DateTime?
+  timeSpent       Int?        // Seconds taken
+  
+  // Feedback
+  feedback        Json?       // Question-by-question feedback
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  enrollment      Enrollment  @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  assessment      Assessment  @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  
+  @@map("assessment_attempts")
+  @@unique([enrollmentId, assessmentId, attemptNumber])
+  @@index([enrollmentId])
+}
+
+model Certificate {
+  id              String      @id @default(cuid())
+  enrollmentId    String      @unique
+  courseId        String
+  userId          String      // Employee ID
+  
+  // Certificate details
+  certificateNumber String    @unique
+  title           String
+  description     String?
+  
+  // Achievement details
+  completionDate  DateTime
+  finalScore      Float?
+  grade           String?     // A, B, C, etc.
+  
+  // Certificate metadata
+  templateId      String?     // Certificate template used
+  certificateUrl  String?     // Generated certificate file
+  
+  // Verification
+  verificationCode String     @unique
+  isValid         Boolean     @default(true)
+  
+  // Expiration (for time-limited certifications)
+  expiresAt       DateTime?
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  enrollment      Enrollment  @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  course          Course      @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  
+  @@map("certificates")
+  @@index([userId])
+  @@index([courseId])
+  @@index([completionDate])
+}
+
+model CourseReview {
+  id              String      @id @default(cuid())
+  courseId        String
+  userId          String      // Employee ID
+
+  // Review content
+  rating          Int         // 1-5 stars
+  title           String?
+  comment         String?
+
+  // Review metadata
+  isVerified      Boolean     @default(false) // Verified purchase/completion
+  isVisible       Boolean     @default(true)
+
+  // Helpful votes
+  helpfulVotes    Int         @default(0)
+  totalVotes      Int         @default(0)
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  course          Course      @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@map("course_reviews")
+  @@unique([courseId, userId])
+  @@index([courseId])
+  @@index([rating])
+}
+
+// Add alias for the review model that the code expects
+model Review {
+  id              String      @id @default(cuid())
+  courseId        String
+  userId          String      // Employee ID
+
+  // Review content
+  rating          Int         // 1-5 stars
+  title           String?
+  comment         String?
+
+  // Review metadata
+  isVerified      Boolean     @default(false) // Verified purchase/completion
+  isVisible       Boolean     @default(true)
+
+  // Helpful votes
+  helpfulVotes    Int         @default(0)
+  totalVotes      Int         @default(0)
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  course          Course      @relation("ReviewsToCourse", fields: [courseId], references: [id], onDelete: Cascade)
+  user            User?       @relation(fields: [userId], references: [id])
+
+  @@map("reviews")
+  @@unique([courseId, userId])
+  @@index([courseId])
+  @@index([rating])
+}
+
+// Add CourseContent model that is expected by the code
+model CourseContent {
+  id              String      @id @default(cuid())
+  courseId        String
+  title           String
+  description     String?     // Add description field that code expects
+  type            String      // 'video', 'text', 'quiz', etc.
+  content         Json        // Content data
+  contentUrl      String?     // Add contentUrl field
+  order           Int         // Order within course
+  duration        Int?        // Duration in minutes
+  isRequired      Boolean     @default(true)
+  isPreview       Boolean     @default(false) // Add isPreview field that code expects
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  course          Course      @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  
+  @@map("course_content")
+  @@index([courseId])
+}
+
+// Add User model stub for relations
+model User {
+  id              String      @id @default(cuid())
+  email           String      @unique
+  name            String
+  bio             String?     // Add bio field that code expects
+  avatar          String?     // Add avatar field
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  reviews         Review[]
+  instructedCourses Course[]   @relation("CourseInstructor")
+  authoredCourses Course[]    @relation("CourseAuthor")
+  
+  @@map("users")
+}
+
+model LearningPath {
+  id              String      @id @default(cuid())
+  title           String
+  description     String
+  
+  // Path metadata
+  difficulty      DifficultyLevel @default(BEGINNER)
+  level           DifficultyLevel @default(BEGINNER) // Add level field that code expects
+  estimatedHours  Float
+  estimatedDuration Float         // Add estimatedDuration field that code expects  
+  category        CourseCategory?
+  tags            String[]
+  
+  // Add fields that code expects
+  courseIds       String[]        // Array of course IDs
+  prerequisites   String[]        // Prerequisites
+  skills          String[]        // Skills learned
+  
+  // Path structure
+  courses         Json        // Ordered list of course IDs with requirements
+  
+  // Status
+  isPublished     Boolean     @default(false)
+  isFeatured      Boolean     @default(false)
+  isActive        Boolean     @default(true)
+  // Analytics
+  totalEnrollments Int        @default(0)
+  
+  // Authoring
+  authorId        String
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  enrollments     LearningPathEnrollment[]
+  pathEnrollments LearningPathEnrollment[] @relation("PathAlias")
+  
+  @@map("learning_paths")
+  @@index([category])
+  @@index([difficulty])
+}
+
+model LearningPathEnrollment {
+  id              String      @id @default(cuid())
+  userId          String      // Employee ID
+  learningPathId  String
+  
+  // Progress tracking
+  status          EnrollmentStatus @default(ENROLLED)
+  progress        Float       @default(0) // Percentage completed
+  currentCourseId String?     // Current course in path
+  
+  // Add field that code expects
+  completedCourseIds String[] // Array of completed course IDs
+  
+  // Timing
+  enrolledAt      DateTime    @default(now())
+  startedAt       DateTime?
+  completedAt     DateTime?
+  
+  // Assignment
+  assignedBy      String?
+  dueDate         DateTime?
+  isRequired      Boolean     @default(false)
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  learningPath    LearningPath @relation(fields: [learningPathId], references: [id], onDelete: Cascade)
+  path            LearningPath @relation("PathAlias", fields: [learningPathId], references: [id], onDelete: Cascade, map: "learning_path_enrollments_path_fkey")
+  
+  @@map("learning_path_enrollments")
+  @@unique([userId, learningPathId])
+  @@index([userId])
+}
+
+model Skill {
+  id              String      @id @default(cuid())
+  name            String      @unique
+  description     String?
+  category        SkillCategory
+  
+  // Skill metadata
+  isVerifiable    Boolean     @default(false) // Can be verified through assessment
+  parentSkillId   String?     // For skill hierarchies
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  parentSkill     Skill?      @relation("SkillHierarchy", fields: [parentSkillId], references: [id])
+  childSkills     Skill[]     @relation("SkillHierarchy")
+  employeeSkills  EmployeeSkill[]
+  
+  @@map("skills")
+  @@index([category])
+}
+
+model EmployeeSkill {
+  id              String      @id @default(cuid())
+  userId          String      // Employee ID
+  skillId         String
+
+  // Skill assessment
+  level           SkillLevel
+  proficiency     Int         // 1-100 scale
+  isVerified      Boolean     @default(false)
+
+  // Evidence and verification
+  evidence        Json[]      // Certificates, projects, etc.
+  verifiedBy      String?     // Who verified this skill
+  verifiedAt      DateTime?
+
+  // Dates
+  acquiredAt      DateTime?   // When skill was first acquired
+  lastUsed        DateTime?   // Last time skill was used
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  skill           Skill       @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  endorsements    SkillEndorsement[]
+
+  @@map("employee_skills")
+  @@unique([userId, skillId])
+  @@index([userId])
+}
+
+model SkillEndorsement {
+  id              String      @id @default(cuid())
+  userSkillId     String      // References EmployeeSkill
+  endorserId      String      // Employee ID who endorsed
+  
+  // Endorsement details
+  comment         String?
+  rating          Int?        // 1-5 scale
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  userSkill       EmployeeSkill @relation(fields: [userSkillId], references: [id], onDelete: Cascade)
+  
+  @@map("skill_endorsements")
+  @@unique([userSkillId, endorserId])
+  @@index([userSkillId])
+}
+
+// Enums
+enum CourseCategory {
+  TECHNICAL
+  LEADERSHIP
+  COMMUNICATION
+  COMPLIANCE
+  SAFETY
+  SOFT_SKILLS
+  PRODUCT_KNOWLEDGE
+  SALES
+  MARKETING
+  FINANCE
+  HR
+  OPERATIONS
+  OTHER
+}
+
+enum DifficultyLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+enum AccessType {
+  INTERNAL        // Only for company employees
+  PUBLIC          // Available to anyone
+  PARTNER         // For business partners
+  CUSTOMER        // For customers
+}
+
+enum CourseStatus {
+  DRAFT
+  REVIEW
+  PUBLISHED
+  ARCHIVED
+  SUSPENDED
+}
+
+enum LessonType {
+  VIDEO
+  TEXT
+  DOCUMENT
+  INTERACTIVE
+  QUIZ
+  ASSIGNMENT
+  EXTERNAL_LINK
+  LIVE_SESSION
+}
+
+enum AssessmentType {
+  QUIZ
+  EXAM
+  ASSIGNMENT
+  PROJECT
+  PRACTICAL
+  SURVEY
+}
+
+enum EnrollmentStatus {
+  ENROLLED
+  IN_PROGRESS
+  COMPLETED
+  DROPPED
+  EXPIRED
+  SUSPENDED
+}
+
+enum ProgressStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+  EXPIRED
+}
+
+enum SkillCategory {
+  TECHNICAL
+  LEADERSHIP
+  COMMUNICATION
+  ANALYTICAL
+  CREATIVE
+  INTERPERSONAL
+  DOMAIN_SPECIFIC
+  TOOLS
+  LANGUAGES
+  CERTIFICATIONS
+}
+
+enum SkillLevel {
+  NOVICE
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}

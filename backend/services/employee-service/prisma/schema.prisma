@@ -1,0 +1,431 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Employee Management Models
+
+model Department {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  code        String   @unique
+  managerId   String?  @unique
+  budget      Decimal? @db.Decimal(12, 2)
+  location    String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  // Relations
+  manager     Employee? @relation("DepartmentManager", fields: [managerId], references: [id])
+  employees   Employee[] @relation("DepartmentEmployees")
+  positions   Position[]
+  auditLogs   AuditLog[] @relation("AuditLogDepartment")
+
+  @@map("departments")
+}
+
+model Position {
+  id            String   @id @default(uuid())
+  title         String
+  description   String?
+  departmentId  String
+  level         Int      @default(1)
+  salaryMin     Decimal? @db.Decimal(10, 2)
+  salaryMax     Decimal? @db.Decimal(10, 2)
+  requirements  Json?
+  responsibilities Json?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+
+  // Relations
+  department    Department @relation(fields: [departmentId], references: [id])
+  employees     Employee[]
+  auditLogs     AuditLog[] @relation("AuditLogPosition")
+
+  @@map("positions")
+}
+
+model Employee {
+  id              String       @id @default(uuid())
+  employeeNumber  String       @unique
+  userId          String?      @unique // Link to auth service user
+  firstName       String
+  lastName        String
+  email           String       @unique
+  phone           String?
+  dateOfBirth     DateTime?
+  gender          Gender?
+  maritalStatus   MaritalStatus?
+  nationality     String?
+  address         Json?        // Structured address data
+  emergencyContact Json?       // Emergency contact info
+  
+  // Employment Details
+  departmentId    String
+  positionId      String
+  managerId       String?
+  hireDate        DateTime
+  terminationDate DateTime?
+  employmentType  EmploymentType @default(FULL_TIME)
+  workLocation    WorkLocation   @default(OFFICE)
+  status          EmployeeStatus @default(ACTIVE)
+  
+  // Salary & Benefits
+  baseSalary      Decimal?     @db.Decimal(10, 2)
+  currency        String       @default("USD")
+  payrollSchedule PayrollSchedule @default(MONTHLY)
+  benefits        Json?        // Benefits package
+  
+  // Professional Details
+  skills          Json?        // Array of skills
+  certifications  Json?        // Professional certifications
+  education       Json?        // Education history
+  experience      Json?        // Previous work experience
+  
+  // System Fields
+  profilePicture  String?      // URL to profile picture
+  documents       Json?        // Array of document references
+  notes           String?
+  isActive        Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  deletedAt       DateTime?
+
+  // Relations
+  department      Department   @relation("DepartmentEmployees", fields: [departmentId], references: [id])
+  position        Position     @relation(fields: [positionId], references: [id])
+  manager         Employee?    @relation("EmployeeManager", fields: [managerId], references: [id])
+  directReports   Employee[]   @relation("EmployeeManager")
+  managedDepartment Department? @relation("DepartmentManager")
+  
+  // Performance & Development
+  performanceReviews PerformanceReview[]
+  goals           Goal[]
+  trainings       EmployeeTraining[]
+  
+  // Time & Attendance
+  timeEntries     TimeEntry[]
+  leaveRequests   LeaveRequest[]
+  
+  // Audit & History
+  auditLogs       AuditLog[] @relation("AuditLogEmployee")
+  employeeHistory EmployeeHistory[]
+
+  @@map("employees")
+}
+
+model PerformanceReview {
+  id              String   @id @default(uuid())
+  employeeId      String
+  reviewerId      String
+  reviewPeriod    String   // e.g., "2023-Q4", "2023-Annual"
+  reviewType      ReviewType @default(ANNUAL)
+  overallRating   Float?   // 1-5 scale
+  goals           Json?    // Goals and achievements
+  strengths       String?
+  areasForImprovement String?
+  developmentPlan String?
+  managerComments String?
+  employeeComments String?
+  hrComments      String?
+  status          ReviewStatus @default(DRAFT)
+  dueDate         DateTime
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  employee        Employee @relation(fields: [employeeId], references: [id])
+  auditLogs       AuditLog[] @relation("AuditLogPerformanceReview")
+
+  @@map("performance_reviews")
+}
+
+model Goal {
+  id              String     @id @default(uuid())
+  employeeId      String
+  title           String
+  description     String?
+  category        GoalCategory @default(PERFORMANCE)
+  priority        Priority   @default(MEDIUM)
+  status          GoalStatus @default(NOT_STARTED)
+  progress        Int        @default(0) // 0-100 percentage
+  targetDate      DateTime
+  achievedDate    DateTime?
+  metrics         Json?      // Success metrics
+  notes           String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  employee        Employee   @relation(fields: [employeeId], references: [id])
+  auditLogs       AuditLog[] @relation("AuditLogGoal")
+
+  @@map("goals")
+}
+
+model EmployeeTraining {
+  id              String         @id @default(uuid())
+  employeeId      String
+  trainingTitle   String
+  trainingType    TrainingType   @default(INTERNAL)
+  provider        String?
+  description     String?
+  startDate       DateTime
+  endDate         DateTime?
+  status          TrainingStatus @default(ENROLLED)
+  completionRate  Int            @default(0) // 0-100 percentage
+  certificateUrl  String?
+  cost            Decimal?       @db.Decimal(8, 2)
+  notes           String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relations
+  employee        Employee       @relation(fields: [employeeId], references: [id])
+  auditLogs       AuditLog[] @relation("AuditLogTraining")
+
+  @@map("employee_trainings")
+}
+
+model TimeEntry {
+  id              String     @id @default(uuid())
+  employeeId      String
+  date            DateTime   @db.Date
+  clockIn         DateTime?
+  clockOut        DateTime?
+  breakStart      DateTime?
+  breakEnd        DateTime?
+  hoursWorked     Decimal?   @db.Decimal(4, 2)
+  overtimeHours   Decimal?   @db.Decimal(4, 2)
+  location        String?    // Work location
+  notes           String?
+  status          TimeEntryStatus @default(PENDING)
+  approvedBy      String?
+  approvedAt      DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  employee        Employee   @relation(fields: [employeeId], references: [id])
+  auditLogs       AuditLog[] @relation("AuditLogTimeEntry")
+
+  @@unique([employeeId, date])
+  @@map("time_entries")
+}
+
+model LeaveRequest {
+  id              String      @id @default(uuid())
+  employeeId      String
+  leaveType       LeaveType
+  startDate       DateTime    @db.Date
+  endDate         DateTime    @db.Date
+  days            Int
+  reason          String?
+  status          LeaveStatus @default(PENDING)
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectedReason  String?
+  isEmergency     Boolean     @default(false)
+  attachments     Json?       // Array of attachment URLs
+  notes           String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  employee        Employee    @relation(fields: [employeeId], references: [id])
+  auditLogs       AuditLog[] @relation("AuditLogLeaveRequest")
+
+  @@map("leave_requests")
+}
+
+model EmployeeHistory {
+  id              String         @id @default(uuid())
+  employeeId      String
+  changeType      ChangeType
+  field           String         // Field that was changed
+  oldValue        String?
+  newValue        String?
+  effectiveDate   DateTime
+  reason          String?
+  changedBy       String
+  notes           String?
+  createdAt       DateTime       @default(now())
+
+  // Relations
+  employee        Employee       @relation(fields: [employeeId], references: [id])
+
+  @@map("employee_history")
+}
+
+model AuditLog {
+  id              String     @id @default(uuid())
+  entityType      String     // e.g., 'Employee', 'Department'
+  entityId        String
+  action          String     // e.g., 'CREATE', 'UPDATE', 'DELETE'
+  changes         Json?      // What was changed
+  performedBy     String     // User ID who performed the action
+  ipAddress       String?
+  userAgent       String?
+  timestamp       DateTime   @default(now())
+
+  // Relations (optional foreign keys for better querying)
+  employee        Employee?   @relation("AuditLogEmployee", fields: [entityId], references: [id], map: "audit_log_employee_fkey")
+  department      Department? @relation("AuditLogDepartment", fields: [entityId], references: [id], map: "audit_log_department_fkey")
+  position        Position?   @relation("AuditLogPosition", fields: [entityId], references: [id], map: "audit_log_position_fkey")
+  performanceReview PerformanceReview? @relation("AuditLogPerformanceReview", fields: [entityId], references: [id], map: "audit_log_performance_review_fkey")
+  goal            Goal?       @relation("AuditLogGoal", fields: [entityId], references: [id], map: "audit_log_goal_fkey")
+  training        EmployeeTraining? @relation("AuditLogTraining", fields: [entityId], references: [id], map: "audit_log_training_fkey")
+  timeEntry       TimeEntry?  @relation("AuditLogTimeEntry", fields: [entityId], references: [id], map: "audit_log_time_entry_fkey")
+  leaveRequest    LeaveRequest? @relation("AuditLogLeaveRequest", fields: [entityId], references: [id], map: "audit_log_leave_request_fkey")
+
+  @@map("audit_logs")
+}
+
+// Enums
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
+enum MaritalStatus {
+  SINGLE
+  MARRIED
+  DIVORCED
+  WIDOWED
+  OTHER
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERN
+  TEMPORARY
+}
+
+enum WorkLocation {
+  OFFICE
+  REMOTE
+  HYBRID
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+  TERMINATED
+  ON_LEAVE
+  SUSPENDED
+}
+
+enum PayrollSchedule {
+  WEEKLY
+  BI_WEEKLY
+  MONTHLY
+  QUARTERLY
+}
+
+enum ReviewType {
+  ANNUAL
+  SEMI_ANNUAL
+  QUARTERLY
+  PROBATIONARY
+  PROJECT_BASED
+}
+
+enum ReviewStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+  APPROVED
+  CANCELLED
+}
+
+enum GoalCategory {
+  PERFORMANCE
+  DEVELOPMENT
+  CAREER
+  PROJECT
+  PERSONAL
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum GoalStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  ON_HOLD
+  CANCELLED
+}
+
+enum TrainingType {
+  INTERNAL
+  EXTERNAL
+  ONLINE
+  WORKSHOP
+  CONFERENCE
+  CERTIFICATION
+}
+
+enum TrainingStatus {
+  ENROLLED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum TimeEntryStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum LeaveType {
+  ANNUAL
+  SICK
+  MATERNITY
+  PATERNITY
+  BEREAVEMENT
+  PERSONAL
+  UNPAID
+  COMPENSATORY
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum ChangeType {
+  PROMOTION
+  TRANSFER
+  SALARY_CHANGE
+  DEPARTMENT_CHANGE
+  POSITION_CHANGE
+  STATUS_CHANGE
+  PERSONAL_INFO_CHANGE
+}

@@ -1,0 +1,734 @@
+name: HRMS CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop, 'feature/*', 'hotfix/*' ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  NODE_VERSION: '18.x'
+  DOCKER_REGISTRY: 'ghcr.io'
+  DOCKER_IMAGE_PREFIX: 'hrms'
+  AWS_REGION: 'us-east-1'
+  EKS_CLUSTER_NAME: 'hrms-cluster'
+  KUBERNETES_VERSION: '1.28'
+
+jobs:
+  # Code Quality and Security Checks
+  code-quality:
+    name: Code Quality & Security
+    runs-on: ubuntu-latest
+    outputs:
+      changed-services: ${{ steps.changes.outputs.changed-services }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: '**/package-lock.json'
+
+      - name: Detect changed services
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            CHANGED_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }})
+          else
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+          fi
+          
+          CHANGED_SERVICES=""
+          for file in $CHANGED_FILES; do
+            if [[ $file == backend/services/* ]]; then
+              SERVICE=$(echo $file | cut -d'/' -f3)
+              if [[ ! $CHANGED_SERVICES =~ $SERVICE ]]; then
+                CHANGED_SERVICES="$CHANGED_SERVICES $SERVICE"
+              fi
+            fi
+          done
+          
+          echo "changed-services=${CHANGED_SERVICES}" >> $GITHUB_OUTPUT
+          echo "Changed services: $CHANGED_SERVICES"
+
+      - name: Install dependencies (shared)
+        run: |
+          cd backend/services/shared
+          npm ci
+
+      - name: Lint shared service
+        run: |
+          cd backend/services/shared
+          npm run lint
+
+      - name: Security audit
+        run: |
+          cd backend/services/shared
+          npm audit --audit-level=moderate
+
+      - name: Check for secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # Database Migration Tests
+  database-tests:
+    name: Database Migration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hrms_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Test database migrations
+        run: |
+          for service in backend/services/*/; do
+            if [ -f "$service/prisma/schema.prisma" ]; then
+              echo "Testing migrations for $(basename $service)"
+              cd $service
+              npm ci
+              npx prisma generate
+              npx prisma db push --force-reset
+              cd ../../..
+            fi
+          done
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hrms_test
+
+  # Unit and Integration Tests
+  test-services:
+    name: Test Services
+    runs-on: ubuntu-latest
+    needs: [code-quality]
+    strategy:
+      matrix:
+        service: [auth-service, employee-service, learning-service, performance-service, api-gateway, shared]
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hrms_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+      kafka:
+        image: confluentinc/cp-kafka:latest
+        env:
+          KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+        ports:
+          - 9092:9092
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          cd backend/services/${{ matrix.service }}
+          npm ci
+
+      - name: Generate Prisma client (if applicable)
+        run: |
+          cd backend/services/${{ matrix.service }}
+          if [ -f "prisma/schema.prisma" ]; then
+            npx prisma generate
+          fi
+
+      - name: Run unit tests
+        run: |
+          cd backend/services/${{ matrix.service }}
+          npm run test:coverage
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hrms_test
+          REDIS_URL: redis://localhost:6379
+          KAFKA_BROKERS: localhost:9092
+
+      - name: Run integration tests
+        run: |
+          cd backend/services/${{ matrix.service }}
+          npm run test --testNamePattern="integration"
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hrms_test
+          REDIS_URL: redis://localhost:6379
+          KAFKA_BROKERS: localhost:9092
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: backend/services/${{ matrix.service }}/coverage/lcov.info
+          flags: ${{ matrix.service }}
+          name: ${{ matrix.service }}-coverage
+
+  # End-to-End Tests
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [test-services]
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hrms_e2e
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Start services with Docker Compose
+        run: |
+          cd backend
+          docker-compose -f docker-compose.dev.yml up -d postgres redis
+          sleep 10
+
+      - name: Install and start services
+        run: |
+          # Install shared dependencies first
+          cd backend/services/shared
+          npm ci
+          npm run build
+          
+          # Start each service in background
+          for service in auth-service employee-service learning-service api-gateway; do
+            cd ../backend/services/$service
+            npm ci
+            if [ -f "prisma/schema.prisma" ]; then
+              npx prisma generate
+              npx prisma db push
+            fi
+            npm run build
+            npm start &
+            sleep 5
+          done
+
+      - name: Wait for services to be ready
+        run: |
+          timeout 300 bash -c 'until curl -f http://localhost:3000/health; do sleep 5; done'
+          timeout 300 bash -c 'until curl -f http://localhost:3001/health; do sleep 5; done'
+
+      - name: Run E2E tests
+        run: |
+          cd backend/services/learning-service
+          npm run test --testNamePattern="e2e"
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hrms_e2e
+          REDIS_URL: redis://localhost:6379
+          API_GATEWAY_URL: http://localhost:3000
+          AUTH_SERVICE_URL: http://localhost:3001
+
+      - name: Save E2E test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: e2e-test-artifacts
+          path: |
+            backend/services/*/logs/
+            backend/services/*/coverage/
+            screenshots/
+            videos/
+
+  # Performance Tests
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    needs: [test-services]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Start services for performance testing
+        run: |
+          cd backend
+          docker-compose -f docker-compose.dev.yml up -d
+          sleep 30
+
+      - name: Run performance tests
+        run: |
+          k6 run --out json=performance-results.json backend/scripts/performance-tests.js
+        env:
+          API_GATEWAY_URL: http://localhost:3000
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v3
+        with:
+          name: performance-results
+          path: performance-results.json
+
+  # Build Docker Images
+  build-images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [test-services]
+    outputs:
+      image-tags: ${{ steps.meta.outputs.tags }}
+    strategy:
+      matrix:
+        service: [auth-service, employee-service, learning-service, performance-service, api-gateway]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/${{ env.DOCKER_IMAGE_PREFIX }}-${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: backend/services/${{ matrix.service }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Security Scanning
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: [build-images]
+    strategy:
+      matrix:
+        service: [auth-service, employee-service, learning-service, performance-service, api-gateway]
+    steps:
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/${{ env.DOCKER_IMAGE_PREFIX }}-${{ matrix.service }}:latest
+          format: 'sarif'
+          output: 'trivy-results-${{ matrix.service }}.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results-${{ matrix.service }}.sarif'
+
+  # Deploy to Staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build-images, security-scan]
+    if: github.ref == 'refs/heads/develop' || github.event.inputs.environment == 'staging'
+    environment:
+      name: staging
+      url: https://staging.hrms.company.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: ${{ env.KUBERNETES_VERSION }}
+
+      - name: Configure kubectl for EKS
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}-staging
+          kubectl config set-context --current --namespace=hrms-staging
+
+      - name: Create namespace if not exists
+        run: |
+          kubectl create namespace hrms-staging --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy AWS Load Balancer Controller
+        run: |
+          # Install AWS Load Balancer Controller if not exists
+          if ! kubectl get deployment -n kube-system aws-load-balancer-controller 2>/dev/null; then
+            curl -o iam_policy.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.6.1/docs/install/iam_policy.json
+            aws iam create-policy --policy-name AWSLoadBalancerControllerIAMPolicy --policy-document file://iam_policy.json --no-cli-pager || true
+            
+            # Create service account
+            eksctl create iamserviceaccount \
+              --cluster=${{ env.EKS_CLUSTER_NAME }}-staging \
+              --namespace=kube-system \
+              --name=aws-load-balancer-controller \
+              --role-name AmazonEKSLoadBalancerControllerRole \
+              --attach-policy-arn=arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:policy/AWSLoadBalancerControllerIAMPolicy \
+              --approve --override-existing-serviceaccounts || true
+            
+            # Install via Helm
+            helm repo add eks https://aws.github.io/eks-charts
+            helm repo update
+            helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+              -n kube-system \
+              --set clusterName=${{ env.EKS_CLUSTER_NAME }}-staging \
+              --set serviceAccount.create=false \
+              --set serviceAccount.name=aws-load-balancer-controller \
+              --set image.repository=602401143452.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/amazon/aws-load-balancer-controller || true
+          fi
+
+      - name: Sync secrets from AWS Secrets Manager
+        run: |
+          # Create External Secrets Operator if not exists
+          if ! kubectl get namespace external-secrets-system 2>/dev/null; then
+            helm repo add external-secrets https://charts.external-secrets.io
+            helm repo update
+            helm install external-secrets external-secrets/external-secrets -n external-secrets-system --create-namespace
+          fi
+          
+          # Apply secret store and external secrets
+          kubectl apply -f backend/k8s/aws-secrets/
+
+      - name: Deploy to staging
+        run: |
+          # Apply ConfigMaps first
+          kubectl apply -f backend/k8s/configmaps.yaml -n hrms-staging
+          
+          # Apply StatefulSets for infrastructure
+          kubectl apply -f backend/k8s/statefulsets.yaml -n hrms-staging
+          
+          # Wait for infrastructure to be ready
+          kubectl wait --for=condition=ready pod -l app=postgresql --timeout=300s -n hrms-staging || true
+          kubectl wait --for=condition=ready pod -l app=redis --timeout=300s -n hrms-staging || true
+          
+          # Update image tags and deploy services
+          for service in auth-service employee-service learning-service performance-service api-gateway; do
+            kubectl set image deployment/hrms-$service hrms-$service=${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/${{ env.DOCKER_IMAGE_PREFIX }}-$service:${{ github.sha }} -n hrms-staging
+          done
+          
+          # Apply deployments and services
+          kubectl apply -f backend/k8s/deployments.yaml -n hrms-staging
+          kubectl apply -f backend/k8s/services.yaml -n hrms-staging
+          kubectl apply -f backend/k8s/ingress.yaml -n hrms-staging
+          
+          # Wait for rollout to complete
+          for service in auth-service employee-service learning-service performance-service api-gateway; do
+            kubectl rollout status deployment/hrms-$service --timeout=600s -n hrms-staging
+          done
+
+      - name: Run smoke tests
+        run: |
+          cd backend/scripts
+          npm install
+          npm run smoke-tests -- --env staging
+        env:
+          STAGING_API_URL: https://api-staging.hrms.company.com
+
+  # Deploy to Production
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [deploy-staging]
+    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'production'
+    environment:
+      name: production
+      url: https://hrms.company.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: ${{ env.KUBERNETES_VERSION }}
+
+      - name: Configure kubectl for EKS
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}-production
+          kubectl config set-context --current --namespace=hrms-production
+
+      - name: Create production namespace if not exists
+        run: |
+          kubectl create namespace hrms-production --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy AWS Load Balancer Controller (Production)
+        run: |
+          # Install AWS Load Balancer Controller if not exists
+          if ! kubectl get deployment -n kube-system aws-load-balancer-controller 2>/dev/null; then
+            curl -o iam_policy.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.6.1/docs/install/iam_policy.json
+            aws iam create-policy --policy-name AWSLoadBalancerControllerIAMPolicy --policy-document file://iam_policy.json --no-cli-pager || true
+            
+            # Create service account
+            eksctl create iamserviceaccount \
+              --cluster=${{ env.EKS_CLUSTER_NAME }}-production \
+              --namespace=kube-system \
+              --name=aws-load-balancer-controller \
+              --role-name AmazonEKSLoadBalancerControllerRole \
+              --attach-policy-arn=arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:policy/AWSLoadBalancerControllerIAMPolicy \
+              --approve --override-existing-serviceaccounts || true
+            
+            # Install via Helm
+            helm repo add eks https://aws.github.io/eks-charts
+            helm repo update
+            helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+              -n kube-system \
+              --set clusterName=${{ env.EKS_CLUSTER_NAME }}-production \
+              --set serviceAccount.create=false \
+              --set serviceAccount.name=aws-load-balancer-controller \
+              --set image.repository=602401143452.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/amazon/aws-load-balancer-controller || true
+          fi
+
+      - name: Blue-Green Deployment to Production
+        run: |
+          # Apply ConfigMaps and Infrastructure
+          kubectl apply -f backend/k8s/configmaps.yaml -n hrms-production
+          kubectl apply -f backend/k8s/statefulsets.yaml -n hrms-production
+          
+          # Wait for infrastructure to be ready
+          kubectl wait --for=condition=ready pod -l app=postgresql --timeout=300s -n hrms-production || true
+          kubectl wait --for=condition=ready pod -l app=redis --timeout=300s -n hrms-production || true
+          
+          # Check if green deployment exists, if not create it
+          GREEN_EXISTS=$(kubectl get deployment hrms-api-gateway-green -n hrms-production 2>/dev/null || echo "not found")
+          
+          if [[ "$GREEN_EXISTS" == "not found" ]]; then
+            # First time deployment - create green directly
+            kubectl apply -f backend/k8s/deployments.yaml -n hrms-production
+            # Label as green version
+            for service in auth-service employee-service learning-service performance-service api-gateway; do
+              kubectl patch deployment hrms-$service -n hrms-production -p '{"metadata":{"labels":{"version":"green"}}}'
+              kubectl patch deployment hrms-$service -n hrms-production -p '{"spec":{"selector":{"matchLabels":{"version":"green"}},"template":{"metadata":{"labels":{"version":"green"}}}}}'
+            done
+          else
+            # Create new green deployment with updated images
+            for service in auth-service employee-service learning-service performance-service api-gateway; do
+              # Copy current deployment to green
+              kubectl get deployment hrms-$service -n hrms-production -o yaml | \
+                sed 's/name: hrms-'$service'/name: hrms-'$service'-green/' | \
+                sed 's/version: blue/version: green/' | \
+                kubectl apply -f -
+            done
+          fi
+          
+          # Update image tags for green deployment
+          for service in auth-service employee-service learning-service performance-service api-gateway; do
+            kubectl set image deployment/hrms-$service-green hrms-$service=${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/${{ env.DOCKER_IMAGE_PREFIX }}-$service:${{ github.sha }} -n hrms-production || \
+            kubectl set image deployment/hrms-$service hrms-$service=${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/${{ env.DOCKER_IMAGE_PREFIX }}-$service:${{ github.sha }} -n hrms-production
+          done
+          
+          # Apply services
+          kubectl apply -f backend/k8s/services.yaml -n hrms-production
+          
+          # Wait for green deployment to be ready
+          for service in auth-service employee-service learning-service performance-service api-gateway; do
+            kubectl rollout status deployment/hrms-$service-green --timeout=600s -n hrms-production || \
+            kubectl rollout status deployment/hrms-$service --timeout=600s -n hrms-production
+          done
+
+      - name: Run production smoke tests
+        run: |
+          cd backend/scripts
+          npm run smoke-tests -- --env production-green
+        env:
+          PRODUCTION_GREEN_API_URL: https://api-green.hrms.company.com
+
+      - name: Switch traffic to green
+        run: |
+          # Update ingress to point to green deployment
+          kubectl patch ingress hrms-ingress -n hrms-production -p '{"metadata":{"annotations":{"alb.ingress.kubernetes.io/target-group-attributes":"stickiness.enabled=false"}}}'
+          
+          # Switch service selectors to green
+          for service in auth-service employee-service learning-service performance-service api-gateway; do
+            kubectl patch service hrms-$service -n hrms-production -p '{"spec":{"selector":{"version":"green"}}}'
+          done
+          
+          # Apply updated ingress configuration
+          kubectl apply -f backend/k8s/ingress.yaml -n hrms-production
+          
+          # Wait for traffic to switch
+          sleep 60
+
+      - name: Verify production deployment
+        run: |
+          cd backend/scripts
+          npm run smoke-tests -- --env production
+        env:
+          PRODUCTION_API_URL: https://api.hrms.company.com
+
+      - name: Clean up blue environment
+        run: |
+          # Remove blue deployments if they exist
+          for service in auth-service employee-service learning-service performance-service api-gateway; do
+            kubectl delete deployment hrms-$service-blue -n hrms-production || true
+          done
+          
+          # Clean up old replica sets
+          kubectl delete rs -l version=blue -n hrms-production || true
+
+  # Notify deployment status
+  notify:
+    name: Notify Deployment Status
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: always()
+    steps:
+      - name: Notify Slack
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: |
+            HRMS Deployment Status: ${{ job.status }}
+            Branch: ${{ github.ref }}
+            Commit: ${{ github.sha }}
+            Actor: ${{ github.actor }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Create GitHub Release
+        if: github.ref == 'refs/heads/main' && needs.deploy-production.result == 'success'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ github.run_number }}
+          release_name: Release v${{ github.run_number }}
+          body: |
+            Changes in this Release:
+            ${{ github.event.head_commit.message }}
+            
+            Deployed services:
+            - auth-service
+            - employee-service
+            - learning-service
+            - performance-service
+            - api-gateway
+          draft: false
+          prerelease: false

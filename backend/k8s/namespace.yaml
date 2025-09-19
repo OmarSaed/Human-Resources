@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hrms
+  labels:
+    name: hrms
+    environment: production
+    app: hrms-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hrms-staging
+  labels:
+    name: hrms-staging
+    environment: staging
+    app: hrms-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hrms-monitoring
+  labels:
+    name: hrms-monitoring
+    environment: monitoring
+    app: hrms-system

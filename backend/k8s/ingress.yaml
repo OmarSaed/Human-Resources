@@ -1,0 +1,231 @@
+# AWS Application Load Balancer Ingress for HRMS
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hrms-ingress
+  namespace: hrms-staging
+  annotations:
+    # AWS Load Balancer Controller annotations
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    
+    # SSL Configuration
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT_ID
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS-1-2-2017-01
+    
+    # Health Check Configuration
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '30'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '3'
+    
+    # Load Balancer Attributes
+    alb.ingress.kubernetes.io/load-balancer-attributes: |
+      routing.http2.enabled=true,
+      idle_timeout.timeout_seconds=60,
+      access_logs.s3.enabled=true,
+      access_logs.s3.bucket=hrms-alb-logs-staging,
+      access_logs.s3.prefix=hrms-staging
+    
+    # Security Groups
+    alb.ingress.kubernetes.io/security-groups: sg-xxxxxxxxx
+    
+    # CORS and Security Headers
+    alb.ingress.kubernetes.io/actions.response-headers: |
+      {
+        "type": "fixed-response",
+        "fixedResponseConfig": {
+          "contentType": "application/json",
+          "statusCode": "200",
+          "messageBody": "{\"status\":\"ok\"}"
+        }
+      }
+spec:
+  rules:
+  - host: api-staging.hrms.company.com
+    http:
+      paths:
+      - path: /api/auth
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-auth-service
+            port:
+              number: 3001
+      - path: /api/employees
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-employee-service
+            port:
+              number: 3002
+      - path: /api/performance
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-performance-service
+            port:
+              number: 3004
+      - path: /api/learning
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-learning-service
+            port:
+              number: 3005
+      - path: /api/recruitment
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-recruitment-service
+            port:
+              number: 3006
+      - path: /api/documents
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-document-service
+            port:
+              number: 3007
+      - path: /api/notifications
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-notification-service
+            port:
+              number: 3008
+      - path: /api/attendance
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-time-attendance-service
+            port:
+              number: 3003
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-api-gateway
+            port:
+              number: 3000
+
+---
+# Production Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hrms-ingress
+  namespace: hrms-production
+  annotations:
+    # AWS Load Balancer Controller annotations
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    
+    # SSL Configuration
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/PROD_CERT_ID
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS-1-2-2017-01
+    
+    # Health Check Configuration
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '2'
+    
+    # Load Balancer Attributes for Production
+    alb.ingress.kubernetes.io/load-balancer-attributes: |
+      routing.http2.enabled=true,
+      idle_timeout.timeout_seconds=60,
+      access_logs.s3.enabled=true,
+      access_logs.s3.bucket=hrms-alb-logs-production,
+      access_logs.s3.prefix=hrms-production,
+      deletion_protection.enabled=true
+    
+    # Security Groups
+    alb.ingress.kubernetes.io/security-groups: sg-production-xxxxxxxxx
+    
+    # WAF Association
+    alb.ingress.kubernetes.io/wafv2-acl-arn: arn:aws:wafv2:us-east-1:ACCOUNT_ID:webacl/hrms-production-waf
+    
+    # Target Group Binding for Blue-Green
+    alb.ingress.kubernetes.io/target-group-attributes: |
+      stickiness.enabled=false,
+      load_balancing.algorithm.type=round_robin,
+      slow_start.duration_seconds=30
+spec:
+  rules:
+  - host: api.hrms.company.com
+    http:
+      paths:
+      - path: /api/auth
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-auth-service
+            port:
+              number: 3001
+      - path: /api/employees
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-employee-service
+            port:
+              number: 3002
+      - path: /api/performance
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-performance-service
+            port:
+              number: 3004
+      - path: /api/learning
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-learning-service
+            port:
+              number: 3005
+      - path: /api/recruitment
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-recruitment-service
+            port:
+              number: 3006
+      - path: /api/documents
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-document-service
+            port:
+              number: 3007
+      - path: /api/notifications
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-notification-service
+            port:
+              number: 3008
+      - path: /api/attendance
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-time-attendance-service
+            port:
+              number: 3003
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hrms-api-gateway
+            port:
+              number: 3000

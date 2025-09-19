@@ -1,0 +1,533 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model JobPosting {
+  id              String      @id @default(cuid())
+  title           String
+  department      String
+  location        String
+  workType        WorkType    @default(FULL_TIME)
+  workArrangement WorkArrangement @default(OFFICE)
+  
+  // Job details
+  description     String
+  requirements    String[]
+  responsibilities String[]
+  qualifications  String[]
+  skills          String[]
+  salaryMin       Int?
+  salaryMax       Int?
+  currency        String      @default("USD")
+  
+  // Status and metadata
+  status          JobStatus   @default(DRAFT)
+  priority        Priority    @default(NORMAL)
+  urgency         Urgency     @default(NORMAL)
+  
+  // Relationships
+  hiringManagerId String?
+  recruiterId     String?
+  approvedBy      String?
+  
+  // Dates
+  postedAt        DateTime?
+  expiresAt       DateTime?
+  approvedAt      DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  applications    Application[]
+  interviews      Interview[]
+  
+  @@map("job_postings")
+  @@index([status])
+  @@index([department])
+  @@index([postedAt])
+}
+
+model Candidate {
+  id              String      @id @default(cuid())
+  
+  // Personal information
+  firstName       String
+  lastName        String
+  email           String      @unique
+  phone           String?
+  address         Json?       // { street, city, state, country, zipCode }
+  linkedInUrl     String?
+  portfolioUrl    String?
+  
+  // Professional information
+  currentTitle    String?
+  currentCompany  String?
+  experience      Int?        // Years of experience
+  education       Json[]      // Array of education objects
+  skills          String[]
+  certifications  String[]
+  languages       String[]
+  
+  // Documents
+  resumeUrl       String?
+  coverLetterUrl  String?
+  portfolioUrl2   String?
+  
+  // Parsed resume data
+  resumeText      String?
+  resumeData      Json?       // Structured data from resume parsing
+  
+  // Metadata
+  source          CandidateSource @default(CAREER_SITE)
+  referredBy      String?
+  tags            String[]
+  notes           String?
+  
+  // Status
+  status          CandidateStatus @default(NEW)
+  blacklisted     Boolean     @default(false)
+  blacklistReason String?
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  applications    Application[]
+  interviews      Interview[]
+  evaluations     Evaluation[]
+  onboardingTasks OnboardingTask[]
+  
+  @@map("candidates")
+  @@index([email])
+  @@index([status])
+  @@index([source])
+}
+
+model Application {
+  id              String      @id @default(cuid())
+  
+  // References
+  candidateId     String
+  jobPostingId    String
+  
+  // Application details
+  status          ApplicationStatus @default(APPLIED)
+  stage           ApplicationStage @default(SCREENING)
+  priority        Priority    @default(NORMAL)
+  
+  // Scoring and evaluation
+  overallScore    Float?      // 0-100
+  technicalScore  Float?
+  culturalScore   Float?
+  experienceScore Float?
+  
+  // Timeline
+  appliedAt       DateTime    @default(now())
+  lastStatusChange DateTime   @default(now())
+  expectedDecisionDate DateTime?
+  
+  // Assignment and ownership
+  recruiterId     String?
+  hiringManagerId String?
+  
+  // Metadata
+  source          CandidateSource?
+  referralInfo    Json?
+  applicationData Json?       // Custom application form data
+  
+  // Flags
+  isArchived      Boolean     @default(false)
+  isShortlisted   Boolean     @default(false)
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  candidate       Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  jobPosting      JobPosting  @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
+  interviews      Interview[]
+  evaluations     Evaluation[]
+  statusHistory   ApplicationStatusHistory[]
+  
+  @@map("applications")
+  @@unique([candidateId, jobPostingId])
+  @@index([status])
+  @@index([stage])
+  @@index([recruiterId])
+  @@index([appliedAt])
+}
+
+model Interview {
+  id              String      @id @default(cuid())
+  
+  // References
+  applicationId   String
+  candidateId     String
+  jobPostingId    String
+  
+  // Interview details
+  type            InterviewType
+  title           String
+  description     String?
+  
+  // Scheduling
+  scheduledAt     DateTime
+  duration        Int         // Minutes
+  location        String?     // Physical location or meeting link
+  timezone        String      @default("UTC")
+  
+  // Participants
+  interviewerId   String      // Primary interviewer
+  interviewers    String[]    // All interviewers
+  
+  // Status and results
+  status          InterviewStatus @default(SCHEDULED)
+  result          InterviewResult?
+  
+  // Feedback and scoring
+  overallRating   Int?        // 1-5 or 1-10 scale
+  technicalRating Int?
+  communicationRating Int?
+  culturalFitRating Int?
+  feedback        String?
+  strengths       String[]
+  weaknesses      String[]
+  recommendations String?
+  
+  // Next steps
+  nextSteps       String?
+  followUpRequired Boolean    @default(false)
+  
+  // Metadata
+  round           Int         @default(1)
+  isRecorded      Boolean     @default(false)
+  recordingUrl    String?
+  notes           String?
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  application     Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  candidate       Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  jobPosting      JobPosting  @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
+  
+  @@map("interviews")
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([interviewerId])
+}
+
+model Evaluation {
+  id              String      @id @default(cuid())
+  
+  // References
+  applicationId   String
+  candidateId     String
+  evaluatorId     String      // Who performed the evaluation
+  
+  // Evaluation details
+  type            EvaluationType
+  title           String
+  criteria        Json        // Evaluation criteria and weights
+  
+  // Scoring
+  scores          Json        // Individual criterion scores
+  overallScore    Float       // Calculated or manual overall score
+  rating          EvaluationRating
+  
+  // Feedback
+  summary         String?
+  strengths       String[]
+  improvements    String[]
+  comments        String?
+  recommendation  EvaluationRecommendation
+  
+  // Metadata
+  completedAt     DateTime    @default(now())
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  application     Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  candidate       Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  
+  @@map("evaluations")
+  @@index([applicationId])
+  @@index([evaluatorId])
+}
+
+model ApplicationStatusHistory {
+  id              String      @id @default(cuid())
+  applicationId   String
+  
+  fromStatus      ApplicationStatus?
+  toStatus        ApplicationStatus
+  fromStage       ApplicationStage?
+  toStage         ApplicationStage
+  
+  reason          String?
+  comments        String?
+  changedBy       String
+  
+  timestamp       DateTime    @default(now())
+  
+  // Relations
+  application     Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  
+  @@map("application_status_history")
+  @@index([applicationId])
+  @@index([timestamp])
+}
+
+model OnboardingTask {
+  id              String      @id @default(cuid())
+  
+  // References
+  candidateId     String?     // For hired candidates
+  employeeId      String?     // Once they become an employee
+  
+  // Task details
+  title           String
+  description     String
+  category        OnboardingCategory
+  type            TaskType    @default(MANUAL)
+  
+  // Assignment
+  assignedBy      String
+  assignedTo      String?     // HR person responsible
+  
+  // Status and completion
+  status          TaskStatus  @default(PENDING)
+  priority        Priority    @default(NORMAL)
+  
+  // Timeline
+  dueDate         DateTime
+  completedAt     DateTime?
+  estimatedHours  Int?
+  actualHours     Int?
+  
+  // Content and attachments
+  instructions    String?
+  attachments     String[]    // URLs to documents/forms
+  dependencies    String[]    // Other task IDs this depends on
+  
+  // Metadata
+  order           Int         @default(0)
+  isRequired      Boolean     @default(true)
+  isAutomated     Boolean     @default(false)
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  // Relations
+  candidate       Candidate?  @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  
+  @@map("onboarding_tasks")
+  @@index([candidateId])
+  @@index([employeeId])
+  @@index([status])
+  @@index([dueDate])
+}
+
+model OnboardingTemplate {
+  id              String      @id @default(cuid())
+  name            String      @unique
+  description     String?
+  department      String?     // Specific to department or general
+  position        String?     // Specific to position type
+  
+  // Template content
+  tasks           Json        // Array of task templates
+  duration        Int         // Expected days to complete
+  
+  // Status
+  isActive        Boolean     @default(true)
+  version         String      @default("1.0")
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@map("onboarding_templates")
+}
+
+// Enums
+enum WorkType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERNSHIP
+  FREELANCE
+}
+
+enum WorkArrangement {
+  OFFICE
+  REMOTE
+  HYBRID
+}
+
+enum JobStatus {
+  DRAFT
+  PENDING_APPROVAL
+  ACTIVE
+  PAUSED
+  FILLED
+  CANCELLED
+  EXPIRED
+}
+
+enum Priority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum Urgency {
+  NORMAL
+  URGENT
+  CRITICAL
+}
+
+enum CandidateSource {
+  CAREER_SITE
+  JOB_BOARD
+  LINKEDIN
+  REFERRAL
+  RECRUITER
+  UNIVERSITY
+  SOCIAL_MEDIA
+  DIRECT_APPLICATION
+  HEADHUNTER
+  OTHER
+}
+
+enum CandidateStatus {
+  NEW
+  REVIEWING
+  QUALIFIED
+  INTERVIEWING
+  OFFERED
+  HIRED
+  REJECTED
+  WITHDRAWN
+  BLACKLISTED
+}
+
+enum ApplicationStatus {
+  APPLIED
+  SCREENING
+  PHONE_SCREEN
+  TECHNICAL_TEST
+  ONSITE_INTERVIEW
+  FINAL_REVIEW
+  OFFER_EXTENDED
+  OFFER_ACCEPTED
+  OFFER_DECLINED
+  HIRED
+  REJECTED
+  WITHDRAWN
+}
+
+enum ApplicationStage {
+  SCREENING
+  ASSESSMENT
+  INTERVIEWING
+  DECISION
+  OFFER
+  ONBOARDING
+  COMPLETED
+}
+
+enum InterviewType {
+  PHONE_SCREEN
+  VIDEO_CALL
+  TECHNICAL_INTERVIEW
+  BEHAVIORAL_INTERVIEW
+  PANEL_INTERVIEW
+  ONSITE_INTERVIEW
+  FINAL_INTERVIEW
+  CULTURAL_FIT
+  TECHNICAL_ASSESSMENT
+}
+
+enum InterviewStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  RESCHEDULED
+}
+
+enum InterviewResult {
+  PASS
+  FAIL
+  MAYBE
+  STRONG_PASS
+  STRONG_FAIL
+}
+
+enum EvaluationType {
+  RESUME_REVIEW
+  PHONE_SCREEN
+  TECHNICAL_ASSESSMENT
+  INTERVIEW_FEEDBACK
+  REFERENCE_CHECK
+  FINAL_EVALUATION
+}
+
+enum EvaluationRating {
+  EXCELLENT
+  GOOD
+  AVERAGE
+  BELOW_AVERAGE
+  POOR
+}
+
+enum EvaluationRecommendation {
+  STRONG_HIRE
+  HIRE
+  MAYBE
+  NO_HIRE
+  STRONG_NO_HIRE
+}
+
+enum OnboardingCategory {
+  DOCUMENTATION
+  IT_SETUP
+  ORIENTATION
+  TRAINING
+  MEETINGS
+  COMPLIANCE
+  BENEFITS
+  WORKSPACE_SETUP
+}
+
+enum TaskType {
+  MANUAL
+  AUTOMATED
+  FORM_SUBMISSION
+  DOCUMENT_UPLOAD
+  MEETING
+  TRAINING
+  SYSTEM_ACCESS
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  WAITING_APPROVAL
+  COMPLETED
+  OVERDUE
+  CANCELLED
+  BLOCKED
+}
